@@ -1,7 +1,7 @@
 // src/App.tsx
 import { useState, useEffect } from 'react';
 import { supabase } from './api/supabaseClient';
-import { MultiAgentReview } from './components/ReviewPanel';
+import MultiAgentReview from './components/MultiAgentReview';
 
 function LoginGate({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<any>(null);
