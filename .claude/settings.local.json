@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd C:/Projects/agent-review && npx tsc --noEmit --pretty 2>&1 | head -40)"
+    ]
+  }
+}
