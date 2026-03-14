@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import { supabase } from "../api/supabaseClient";
 
 // ─── Models (labels only — execution happens server-side) ────────────────────
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
@@ -86,17 +85,16 @@ function tokenEstimate(text: string) {
   return Math.ceil(text.length / 4);
 }
 
-async function callEdgeFunction(input: string, agents: string[]) {
-  const { data: { session } } = await supabase.auth.getSession();
+async function callEdgeFunction(input: string, agents: string[], email: string) {
   const res = await fetch(
     `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/multi-agent-review`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${session?.access_token}`,
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
       },
-      body: JSON.stringify({ input, agents }),
+      body: JSON.stringify({ input, agents, email }),
     }
   );
   if (!res.ok) {
@@ -362,7 +360,7 @@ const SAMPLES = [
 ];
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
-export default function MultiAgentReview() {
+export default function MultiAgentReview({ email }: { email: string }) {
   const [input, setInput] = useState("");
   const [enabledAgents, setEnabledAgents] = useState<Record<string, boolean>>(
     () => Object.fromEntries(ALL_AGENTS.map(a => [a.id, a.defaultOn]))
@@ -408,7 +406,7 @@ export default function MultiAgentReview() {
     try {
       // Single Edge Function call — it handles compression, fan-out, and orchestration
       const agentIds = activeAgents.map(a => a.id);
-      const payload = await callEdgeFunction(input, agentIds);
+      const payload = await callEdgeFunction(input, agentIds, email);
 
       // Populate agent results all at once
       setAgentResults(payload.agentResults);

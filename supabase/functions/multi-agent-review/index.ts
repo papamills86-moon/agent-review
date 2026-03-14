@@ -1,5 +1,4 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
 const corsHeaders = {
@@ -160,34 +159,32 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Verify JWT via Supabase
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Missing Authorization header" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     // Parse request body
-    const { input, agents } = (await req.json()) as {
+    const { input, agents, email } = (await req.json()) as {
       input: string;
       agents: string[];
+      email: string;
     };
+
+    // Verify email against allowlist
+    if (!email || typeof email !== "string") {
+      return new Response(JSON.stringify({ error: "Missing email" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const allowedRaw = Deno.env.get("ALLOWED_EMAILS") ?? "";
+    const allowedEmails = new Set(
+      allowedRaw.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),
+    );
+
+    if (!allowedEmails.has(email.trim().toLowerCase())) {
+      return new Response(JSON.stringify({ error: "Unauthorized email" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     if (!input || !agents?.length) {
       return new Response(
