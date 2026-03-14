@@ -32,6 +32,7 @@ function LoginGate({ children }: { children: (email: string) => React.ReactNode 
         headers: {
           'Content-Type': 'application/json',
           apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          'x-agent-secret': import.meta.env.VITE_EDGE_FUNCTION_SECRET,
         },
         body: JSON.stringify({ email: addr }),
       },

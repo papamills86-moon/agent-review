@@ -93,6 +93,7 @@ async function callEdgeFunction(input: string, agents: string[], email: string) 
       headers: {
         "Content-Type": "application/json",
         apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        "x-agent-secret": import.meta.env.VITE_EDGE_FUNCTION_SECRET,
       },
       body: JSON.stringify({ input, agents, email }),
     }

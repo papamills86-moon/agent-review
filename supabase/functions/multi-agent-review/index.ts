@@ -4,8 +4,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": Deno.env.get("ALLOWED_ORIGIN") ?? "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-agent-secret",
 };
+
+// ─── Rate Limiting ───────────────────────────────────────────────────────
+const MAX_REQUESTS_PER_HOUR = 10;
+const requestCounts = new Map<string, { count: number; resetAt: number }>();
 
 // ─── Models ──────────────────────────────────────────────────────────────────
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
@@ -158,6 +162,15 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // Verify shared secret
+  const secret = req.headers.get("x-agent-secret");
+  if (secret !== Deno.env.get("EDGE_FUNCTION_SECRET")) {
+    return new Response(JSON.stringify({ error: "Forbidden" }), {
+      status: 403,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
     // Parse request body
     const { input, agents, email } = (await req.json()) as {
@@ -184,6 +197,23 @@ Deno.serve(async (req) => {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Rate limit check
+    const normalizedEmail = email.trim().toLowerCase();
+    const now = Date.now();
+    const entry = requestCounts.get(normalizedEmail);
+
+    if (entry && now < entry.resetAt) {
+      if (entry.count >= MAX_REQUESTS_PER_HOUR) {
+        return new Response(
+          JSON.stringify({ error: "Rate limit exceeded. Try again later." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      entry.count++;
+    } else {
+      requestCounts.set(normalizedEmail, { count: 1, resetAt: now + 60 * 60 * 1000 });
     }
 
     if (!input || !agents?.length) {
