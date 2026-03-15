@@ -677,7 +677,7 @@ export default function MultiAgentReview({ email }: { email: string }) {
         </div>
 
         {/* Agent Configurator */}
-        {phase === "idle" && (
+        {phase === "idle" && enhancementPhase === "idle" && (
           <div style={{ marginBottom:"24px" }}>
             <div style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.12em",
               color:"#374151", textTransform:"uppercase", marginBottom:"10px" }}>
@@ -698,7 +698,7 @@ export default function MultiAgentReview({ email }: { email: string }) {
         )}
 
         {/* Samples */}
-        {phase === "idle" && (
+        {phase === "idle" && enhancementPhase === "idle" && (
           <div style={{ display:"flex", gap:"7px", marginBottom:"14px", flexWrap:"wrap", alignItems:"center" }}>
             <span style={{ fontSize:"10px", color:"#374151" }}>Load sample:</span>
             {SAMPLES.map(s => (
@@ -716,7 +716,7 @@ export default function MultiAgentReview({ email }: { email: string }) {
         )}
 
         {/* Input */}
-        {phase === "idle" && (
+        {phase === "idle" && enhancementPhase === "idle" && (
           <div style={{ marginBottom:"20px" }}>
             <textarea
               value={input}
@@ -746,16 +746,295 @@ export default function MultiAgentReview({ email }: { email: string }) {
                   </span>
                 )}
               </div>
-              <button onClick={runReview} disabled={!input.trim() || !activeAgents.length} style={{
-                padding:"9px 22px", background: (input.trim() && activeAgents.length) ? "#0f2744" : "#0c1221",
-                border:`1px solid ${(input.trim() && activeAgents.length) ? "#1d4ed850" : "#1e293b"}`,
-                borderRadius:"5px", color:(input.trim() && activeAgents.length) ? "#60a5fa" : "#374151",
-                fontSize:"12px", fontWeight:600, cursor:(input.trim() && activeAgents.length) ? "pointer" : "default",
+              <div style={{ display:"flex", gap:"8px" }}>
+                <button onClick={handleEnhance} disabled={!input.trim()} style={{
+                  padding:"9px 22px", background: input.trim() ? "rgba(167,139,250,0.08)" : "#0c1221",
+                  border:`1px solid ${input.trim() ? "rgba(167,139,250,0.35)" : "#1e293b"}`,
+                  borderRadius:"5px", color: input.trim() ? "#a78bfa" : "#374151",
+                  fontSize:"12px", fontWeight:600, cursor: input.trim() ? "pointer" : "default",
+                  transition:"all 0.15s"
+                }}>
+                  ✦ Enhance Prompt
+                </button>
+                <button onClick={runReview} disabled={!input.trim() || !activeAgents.length} style={{
+                  padding:"9px 22px", background: (input.trim() && activeAgents.length) ? "#0f2744" : "#0c1221",
+                  border:`1px solid ${(input.trim() && activeAgents.length) ? "#1d4ed850" : "#1e293b"}`,
+                  borderRadius:"5px", color:(input.trim() && activeAgents.length) ? "#60a5fa" : "#374151",
+                  fontSize:"12px", fontWeight:600, cursor:(input.trim() && activeAgents.length) ? "pointer" : "default",
+                  transition:"all 0.15s"
+                }}>
+                  Submit for Review →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Enhancing spinner */}
+        {enhancementPhase === "enhancing" && (
+          <div style={{
+            border:"1px solid rgba(167,139,250,0.2)", borderRadius:"6px",
+            background:"rgba(167,139,250,0.04)", padding:"28px 22px",
+            display:"flex", flexDirection:"column", alignItems:"center", gap:"14px",
+            marginBottom:"20px"
+          }}>
+            <div style={{ display:"flex", gap:"5px" }}>
+              {[0,1,2,3].map(i => (
+                <div key={i} style={{ width:"6px", height:"6px", borderRadius:"50%",
+                  background:"#a78bfa", opacity:0.5,
+                  animation:"pulse 1.1s ease-in-out infinite", animationDelay:`${i*0.18}s` }} />
+              ))}
+            </div>
+            <span style={{ fontSize:"12px", color:"#a78bfa", fontWeight:600 }}>Enhancing your prompt…</span>
+            <span style={{ fontSize:"11px", color:"#475569" }}>3 specialist agents analyzing structure, security, and intent</span>
+          </div>
+        )}
+
+        {/* Blocked screen */}
+        {enhancementPhase === "blocked" && enhancementResult && (
+          <div style={{ marginBottom:"20px", display:"flex", flexDirection:"column", gap:"12px" }}>
+            <div style={{
+              border:"1px solid rgba(248,113,113,0.25)", borderRadius:"6px",
+              background:"rgba(248,113,113,0.05)", padding:"18px 22px",
+              display:"flex", flexDirection:"column", gap:"14px"
+            }}>
+              <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
+                <Badge text="BLOCKED" color="#f87171" />
+                <span style={{ fontSize:"13px", color:"#f1f5f9", fontWeight:600 }}>Security gate halted enhancement</span>
+              </div>
+              {enhancementResult.security_flags?.length > 0 && (
+                <div style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
+                  {enhancementResult.security_flags.map((flag: string, i: number) => (
+                    <div key={i} style={{ fontSize:"12px", color:"#f87171", paddingLeft:"16px", position:"relative", lineHeight:1.6 }}>
+                      <span style={{ position:"absolute", left:0, fontWeight:700 }}>!</span>{flag}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display:"flex", gap:"8px", marginTop:"4px" }}>
+                <button onClick={resetEnhancement} style={{
+                  padding:"8px 16px", background:"transparent",
+                  border:"1px solid rgba(248,113,113,0.3)", borderRadius:"5px",
+                  color:"#f87171", fontSize:"12px", fontWeight:600, cursor:"pointer",
+                  transition:"all 0.15s"
+                }}>
+                  ← Edit Original Prompt
+                </button>
+                <button
+                  disabled={!activeAgents.length}
+                  onClick={() => {
+                    setInput(originalInput);
+                    setEnhancementResult(null);
+                    setEditableRefinedPrompt("");
+                    setQuestionAnswers([]);
+                    setEnhancementPhase("counsel-review");
+                  }}
+                  style={{
+                    padding:"8px 16px",
+                    background: activeAgents.length ? "rgba(248,113,113,0.1)" : "#0c1221",
+                    border:`1px solid ${activeAgents.length ? "rgba(248,113,113,0.35)" : "#1e293b"}`,
+                    borderRadius:"5px",
+                    color: activeAgents.length ? "#f87171" : "#374151",
+                    fontSize:"12px", fontWeight:600,
+                    cursor: activeAgents.length ? "pointer" : "default",
+                    transition:"all 0.15s"
+                  }}>
+                  Submit Original to Counsel Anyway →
+                </button>
+              </div>
+            </div>
+            {enhancementTokenUsage && enhancementTokenUsage.length > 0 && (
+              <div style={{
+                background:"rgba(15,23,42,0.8)", border:"1px solid #1e293b",
+                borderRadius:"5px", padding:"10px 14px",
+                display:"flex", gap:"20px", flexWrap:"wrap", alignItems:"center"
+              }}>
+                <span style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.1em", color:"#374151", textTransform:"uppercase" }}>Enhancement Tokens</span>
+                {enhancementTokenUsage.map((entry, i) => (
+                  <Stat key={i} label={`${entry.type}${entry.id ? ` (${entry.id})` : ""}`} val={entry.inputTokens + entry.outputTokens} />
+                ))}
+                <div style={{ marginLeft:"auto", display:"flex", gap:"4px", alignItems:"center" }}>
+                  <span style={{ fontSize:"9px", color:"#475569" }}>TOTAL</span>
+                  <span style={{ fontFamily:"monospace", fontSize:"12px", fontWeight:700, color:"#a78bfa" }}>
+                    {enhancementTokenUsage.reduce((s, t) => s + t.inputTokens + t.outputTokens, 0).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* User-review panel */}
+        {enhancementPhase === "user-review" && enhancementResult && (
+          <div style={{ marginBottom:"20px", display:"flex", flexDirection:"column", gap:"12px" }}>
+
+            {/* 5a. Inferred intent banner */}
+            {enhancementResult.inferred_intent && (
+              <div style={{
+                background:"rgba(56,189,248,0.06)", border:"1px solid rgba(56,189,248,0.15)",
+                borderRadius:"5px", padding:"8px 14px", fontSize:"11px"
+              }}>
+                <span style={{ fontWeight:700, color:"#38bdf8", marginRight:"6px" }}>Intent:</span>
+                <span style={{ color:"#7dd3fc" }}>{enhancementResult.inferred_intent}</span>
+              </div>
+            )}
+
+            {/* 5b. Security status bar */}
+            {enhancementResult.overall_security_level !== "clean" && (
+              <div style={{
+                display:"flex", alignItems:"center", gap:"10px",
+                padding:"8px 14px", borderRadius:"5px",
+                background:"rgba(251,191,36,0.08)", border:"1px solid rgba(251,191,36,0.2)"
+              }}>
+                <Badge text={enhancementResult.overall_security_level} color="#fbbf24" />
+                <span style={{ fontSize:"11px", color:"#fbbf24" }}>Some content was excluded — see changes below</span>
+              </div>
+            )}
+
+            {/* 5c. Changes made */}
+            {enhancementResult.changes_made?.length > 0 && (
+              <div style={{
+                background:"rgba(74,222,128,0.04)", border:"1px solid rgba(74,222,128,0.15)",
+                borderRadius:"6px", padding:"14px 18px",
+                display:"flex", flexDirection:"column", gap:"8px"
+              }}>
+                <div style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.12em",
+                  color:"#374151", textTransform:"uppercase" }}>What Changed</div>
+                {enhancementResult.changes_made.map((change: string, i: number) => (
+                  <div key={i} style={{ fontSize:"12px", color:"#94a3b8", paddingLeft:"16px", position:"relative", lineHeight:1.6 }}>
+                    <span style={{ position:"absolute", left:0, color:"#4ade80", fontWeight:700 }}>→</span>{change}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 5d. Editable refined prompt */}
+            <div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"8px" }}>
+                <div style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.12em",
+                  color:"#374151", textTransform:"uppercase" }}>
+                  Refined Prompt — edit freely before sending to counsel
+                </div>
+                <span style={{ fontFamily:"DM Mono, monospace", fontSize:"10px", color:"#374151" }}>
+                  ~{tokenEstimate(editableRefinedPrompt)} tokens
+                </span>
+              </div>
+              <textarea
+                value={editableRefinedPrompt}
+                onChange={e => setEditableRefinedPrompt(e.target.value)}
+                style={{
+                  width:"100%", minHeight:"160px", background:"#0c1221",
+                  border:"1px solid rgba(167,139,250,0.25)", borderRadius:"6px",
+                  color:"#e2e8f0", fontSize:"13px", padding:"13px 15px",
+                  resize:"vertical", lineHeight:1.7, boxSizing:"border-box",
+                  fontFamily:"DM Sans, sans-serif", transition:"border-color 0.15s"
+                }}
+                onFocus={e => e.target.style.borderColor="rgba(167,139,250,0.5)"}
+                onBlur={e => e.target.style.borderColor="rgba(167,139,250,0.25)"}
+              />
+            </div>
+
+            {/* 5e. Follow-up questions */}
+            {enhancementResult.follow_up_questions?.length > 0 && (
+              <div style={{
+                background:"rgba(56,189,248,0.04)", border:"1px solid rgba(56,189,248,0.12)",
+                borderRadius:"6px", padding:"14px 18px",
+                display:"flex", flexDirection:"column", gap:"12px"
+              }}>
+                <div style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.12em",
+                  color:"#374151", textTransform:"uppercase" }}>
+                  Questions — answer any that would improve the review (optional)
+                </div>
+                {enhancementResult.follow_up_questions.map((q: string, i: number) => (
+                  <div key={i} style={{ display:"flex", flexDirection:"column", gap:"6px" }}>
+                    <div style={{ fontSize:"12px", color:"#7dd3fc", paddingLeft:"14px", position:"relative", lineHeight:1.5 }}>
+                      <span style={{ position:"absolute", left:0, color:"#7dd3fc" }}>?</span>{q}
+                    </div>
+                    <input
+                      type="text"
+                      value={questionAnswers[i] ?? ""}
+                      onChange={e => {
+                        const next = [...questionAnswers];
+                        next[i] = e.target.value;
+                        setQuestionAnswers(next);
+                      }}
+                      placeholder="Your answer (optional)…"
+                      style={{
+                        width:"100%", background:"#0c1221",
+                        border:"1px solid #1e293b", borderRadius:"4px",
+                        color:"#e2e8f0", fontSize:"12px", padding:"8px 12px",
+                        boxSizing:"border-box", fontFamily:"DM Sans, sans-serif",
+                        transition:"border-color 0.15s", outline:"none"
+                      }}
+                      onFocus={e => e.target.style.borderColor="#334155"}
+                      onBlur={e => e.target.style.borderColor="#1e293b"}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 5f. Security flags */}
+            {enhancementResult.security_flags?.length > 0 && (
+              <div style={{
+                background:"rgba(248,113,113,0.04)", border:"1px solid rgba(248,113,113,0.12)",
+                borderRadius:"6px", padding:"14px 18px",
+                display:"flex", flexDirection:"column", gap:"6px"
+              }}>
+                {enhancementResult.security_flags.map((flag: string, i: number) => (
+                  <div key={i} style={{ fontSize:"12px", color:"#f87171", paddingLeft:"16px", position:"relative", lineHeight:1.6 }}>
+                    <span style={{ position:"absolute", left:0, fontWeight:700 }}>!</span>{flag}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 5g. Footer actions */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <button onClick={resetEnhancement} style={{
+                padding:"8px 16px", background:"transparent",
+                border:"1px solid #1e293b", borderRadius:"5px",
+                color:"#475569", fontSize:"12px", fontWeight:600, cursor:"pointer",
                 transition:"all 0.15s"
               }}>
-                Submit for Review →
+                ← Back to Edit
+              </button>
+              <button
+                onClick={handleSendToCounsel}
+                disabled={!editableRefinedPrompt.trim() || !activeAgents.length}
+                style={{
+                  padding:"9px 22px",
+                  background: (editableRefinedPrompt.trim() && activeAgents.length) ? "#0f2744" : "#0c1221",
+                  border:`1px solid ${(editableRefinedPrompt.trim() && activeAgents.length) ? "#1d4ed850" : "#1e293b"}`,
+                  borderRadius:"5px",
+                  color: (editableRefinedPrompt.trim() && activeAgents.length) ? "#60a5fa" : "#374151",
+                  fontSize:"12px", fontWeight:600,
+                  cursor: (editableRefinedPrompt.trim() && activeAgents.length) ? "pointer" : "default",
+                  transition:"all 0.15s"
+                }}>
+                Send to Counsel →
               </button>
             </div>
+
+            {/* 5h. Enhancement token usage bar */}
+            {enhancementTokenUsage && enhancementTokenUsage.length > 0 && (
+              <div style={{
+                background:"rgba(15,23,42,0.8)", border:"1px solid #1e293b",
+                borderRadius:"5px", padding:"10px 14px",
+                display:"flex", gap:"20px", flexWrap:"wrap", alignItems:"center"
+              }}>
+                <span style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.1em", color:"#374151", textTransform:"uppercase" }}>Enhancement Tokens</span>
+                {enhancementTokenUsage.map((entry, i) => (
+                  <Stat key={i} label={`${entry.type}${entry.id ? ` (${entry.id})` : ""}`} val={entry.inputTokens + entry.outputTokens} />
+                ))}
+                <div style={{ marginLeft:"auto", display:"flex", gap:"4px", alignItems:"center" }}>
+                  <span style={{ fontSize:"9px", color:"#475569" }}>TOTAL</span>
+                  <span style={{ fontFamily:"monospace", fontSize:"12px", fontWeight:700, color:"#a78bfa" }}>
+                    {enhancementTokenUsage.reduce((s, t) => s + t.inputTokens + t.outputTokens, 0).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -803,6 +1082,20 @@ export default function MultiAgentReview({ email }: { email: string }) {
                 color:"#475569", fontSize:"10px", cursor:"pointer", whiteSpace:"nowrap"
               }}>New Review</button>
             )}
+          </div>
+        )}
+
+        {/* Enhancement summary banner */}
+        {(enhancementPhase === "counsel-review" || enhancementPhase === "done") && enhancementResult && (
+          <div style={{
+            background:"rgba(167,139,250,0.05)", border:"1px solid rgba(167,139,250,0.15)",
+            borderRadius:"5px", padding:"8px 14px", marginBottom:"16px",
+            display:"flex", alignItems:"center", gap:"10px"
+          }}>
+            <Badge text="ENHANCED" color="#a78bfa" />
+            <span style={{ fontSize:"11px", color:"#94a3b8" }}>
+              Prompt was refined before counsel review · {enhancementResult.changes_made?.length ?? 0} changes
+            </span>
           </div>
         )}
 
