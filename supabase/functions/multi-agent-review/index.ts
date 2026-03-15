@@ -14,7 +14,7 @@ const requestCounts = new Map<string, { count: number; resetAt: number }>();
 // ─── Models ──────────────────────────────────────────────────────────────────
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
 const MODEL_ORCH = "claude-sonnet-4-20250514";
-const TOKENS_AGENT = 450;
+const TOKENS_AGENT = 600;
 const TOKENS_COMPRESS = 300;
 const TOKENS_ORCH = 800;
 const INPUT_COMPRESS_THRESHOLD = 600; // chars
@@ -72,6 +72,41 @@ const ORCH_SYSTEM = `Principal Architect. You receive expert reviews and synthes
 JSON only, no markdown:
 {"verdict":"approve|approve_with_conditions|defer|reject","overall_risk":"critical|high|medium|low","rationale":"2-3 sentences","required_actions":["action"],"open_questions":["question"],"approved_to_proceed":true}`;
 
+// ─── JSON Recovery Helpers ───────────────────────────────────────────────────
+function repairJson(raw: string): Record<string, unknown> | null {
+  // Strategy 1: slice to last closing brace and try parse
+  const lastBrace = raw.lastIndexOf('}');
+  if (lastBrace !== -1) {
+    try { return JSON.parse(raw.slice(0, lastBrace + 1)); } catch { /* continue */ }
+  }
+  // Strategy 2: attempt structural closure with progressively deeper suffixes
+  // Order: close open string value → close open array+object → close nested array
+  if (raw.trim().startsWith('{')) {
+    for (const suffix of ['"}', '"]}', ']}']) {
+      try { return JSON.parse(raw + suffix); } catch { /* continue */ }
+    }
+  }
+  return null;
+}
+
+function extractFromRaw(raw: string): Record<string, unknown> {
+  const level   = raw.match(/"concern_level"\s*:\s*"([^"]+)"/)?.[1] ?? 'unknown';
+  const summary = raw.match(/"summary"\s*:\s*"([^"]+)"/)?.[1]
+                  ?? 'Response truncated — partial analysis only';
+  return {
+    concern_level: level,
+    summary,
+    findings:       ['[Response truncated — re-run to get full findings]'],
+    recommendation: 'Truncated response. Re-run with fewer active agents.',
+    questions:      [],
+    // Deliberate exception to minimalism rule: these flags are retained as
+    // forward hooks for future UI indicators (e.g. a "truncated" badge on
+    // agent cards). No UI work is currently planned — this is an explicit
+    // design choice, not an assumption of future requirements.
+    _truncated:     true,
+  };
+}
+
 // ─── Anthropic API Helper ────────────────────────────────────────────────────
 async function callClaude(
   system: string,
@@ -107,11 +142,18 @@ async function callClaude(
   const inputTokens: number = data.usage?.input_tokens ?? 0;
   const outputTokens: number = data.usage?.output_tokens ?? 0;
 
+  const cleaned = raw.replace(/```json|```/g, "").trim();
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    parsed = JSON.parse(cleaned);
   } catch {
-    parsed = { error: raw };
+    const repaired = repairJson(cleaned);
+    if (repaired) {
+      // Deliberate exception: _repaired flag retained as forward hook (see _truncated note)
+      parsed = { ...repaired, _repaired: true };
+    } else {
+      parsed = extractFromRaw(cleaned);
+    }
   }
 
   return { parsed, inputTokens, outputTokens };
