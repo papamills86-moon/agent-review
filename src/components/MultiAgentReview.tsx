@@ -316,26 +316,94 @@ function OrchestratorPanel({ result, isLoading, tokenData }: { result: any; isLo
   );
 }
 
-function TokenSummary({ tokenLog }: { tokenLog: any[] }) {
+const ENHANCE_AGENT_SHORT: Record<string, string> = {
+  prompt_engineer: "PE", prompt_security: "PS", intent_analyst: "IA"
+};
+
+function TokenSummary({ tokenLog, enhancementTokenLog }: { tokenLog: any[]; enhancementTokenLog?: TokenUsageEntry[] | null }) {
   if (!tokenLog.length) return null;
-  const total = tokenLog.reduce((s: number, t: any) => s + t.inputTokens + t.outputTokens, 0);
+  const counselTotal = tokenLog.reduce((s: number, t: any) => s + t.inputTokens + t.outputTokens, 0);
   const agentTotal = tokenLog.filter((t: any) => t.type === "agent").reduce((s: number, t: any) => s + t.inputTokens + t.outputTokens, 0);
   const orchTotal = tokenLog.filter((t: any) => t.type === "orch").reduce((s: number, t: any) => s + t.inputTokens + t.outputTokens, 0);
   const compressTotal = tokenLog.filter((t: any) => t.type === "compress").reduce((s: number, t: any) => s + t.inputTokens + t.outputTokens, 0);
+
+  const hasEnhancement = enhancementTokenLog && enhancementTokenLog.length > 0;
+
+  // Single-section layout (counsel only)
+  if (!hasEnhancement) {
+    return (
+      <div style={{
+        background:"rgba(15,23,42,0.8)", border:"1px solid #1e293b",
+        borderRadius:"5px", padding:"10px 14px",
+        display:"flex", gap:"20px", flexWrap:"wrap", alignItems:"center"
+      }}>
+        <span style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.1em", color:"#374151", textTransform:"uppercase" }}>Token Usage</span>
+        {compressTotal > 0 && <Stat label="Compress" val={compressTotal} />}
+        <Stat label={`Agents (${MODEL_AGENT.includes("haiku") ? "Haiku" : "Sonnet"})`} val={agentTotal} />
+        <Stat label={`Orchestrator (Sonnet)`} val={orchTotal} />
+        <div style={{ marginLeft:"auto", display:"flex", gap:"4px", alignItems:"center" }}>
+          <span style={{ fontSize:"9px", color:"#475569" }}>TOTAL</span>
+          <span style={{ fontFamily:"monospace", fontSize:"12px", fontWeight:700, color:"#94a3b8" }}>
+            {counselTotal.toLocaleString()}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // Dual-section layout (enhancement + counsel)
+  const enhanceTotal = enhancementTokenLog.reduce((s, t) => s + t.inputTokens + t.outputTokens, 0);
+  const enhanceCompress = enhancementTokenLog.filter(t => t.type === "compress").reduce((s, t) => s + t.inputTokens + t.outputTokens, 0);
+  const enhanceAgents = enhancementTokenLog.filter(t => t.type === "agent");
+  const enhanceOrch = enhancementTokenLog.filter(t => t.type === "orchestrator").reduce((s, t) => s + t.inputTokens + t.outputTokens, 0);
+  const combinedTotal = enhanceTotal + counselTotal;
+
+  const sectionLabelStyle = { fontSize:"9px" as const, fontWeight:700 as const, letterSpacing:"0.1em", color:"#374151", textTransform:"uppercase" as const };
+
   return (
     <div style={{
       background:"rgba(15,23,42,0.8)", border:"1px solid #1e293b",
-      borderRadius:"5px", padding:"10px 14px",
-      display:"flex", gap:"20px", flexWrap:"wrap", alignItems:"center"
+      borderRadius:"5px", padding:"12px 14px",
+      display:"flex", flexDirection:"column", gap:"10px"
     }}>
-      <span style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.1em", color:"#374151", textTransform:"uppercase" }}>Token Usage</span>
-      {compressTotal > 0 && <Stat label="Compress" val={compressTotal} />}
-      <Stat label={`Agents (${MODEL_AGENT.includes("haiku") ? "Haiku" : "Sonnet"})`} val={agentTotal} />
-      <Stat label={`Orchestrator (Sonnet)`} val={orchTotal} />
-      <div style={{ marginLeft:"auto", display:"flex", gap:"4px", alignItems:"center" }}>
-        <span style={{ fontSize:"9px", color:"#475569" }}>TOTAL</span>
-        <span style={{ fontFamily:"monospace", fontSize:"12px", fontWeight:700, color:"#94a3b8" }}>
-          {total.toLocaleString()}
+      <span style={{ ...sectionLabelStyle }}>Token Usage</span>
+
+      {/* Enhancement section */}
+      <div style={{ display:"flex", gap:"20px", flexWrap:"wrap", alignItems:"center" }}>
+        <span style={{ ...sectionLabelStyle, color:"#a78bfa" }}>Enhancement</span>
+        {enhanceCompress > 0 && <Stat label="Compress" val={enhanceCompress} />}
+        {enhanceAgents.map((a, i) => (
+          <Stat key={i} label={ENHANCE_AGENT_SHORT[a.id ?? ""] ?? a.id ?? "Agent"} val={a.inputTokens + a.outputTokens} />
+        ))}
+        {enhanceOrch > 0 && <Stat label="Orch" val={enhanceOrch} />}
+        <div style={{ marginLeft:"auto", display:"flex", gap:"4px", alignItems:"center" }}>
+          <span style={{ fontSize:"9px", color:"#475569" }}>Subtotal</span>
+          <span style={{ fontFamily:"monospace", fontSize:"11px", fontWeight:700, color:"#a78bfa" }}>
+            {enhanceTotal.toLocaleString()}
+          </span>
+        </div>
+      </div>
+
+      {/* Counsel section */}
+      <div style={{ display:"flex", gap:"20px", flexWrap:"wrap", alignItems:"center" }}>
+        <span style={{ ...sectionLabelStyle, color:"#60a5fa" }}>Counsel</span>
+        {compressTotal > 0 && <Stat label="Compress" val={compressTotal} />}
+        <Stat label={`Agents (${MODEL_AGENT.includes("haiku") ? "Haiku" : "Sonnet"})`} val={agentTotal} />
+        <Stat label="Orch (Sonnet)" val={orchTotal} />
+        <div style={{ marginLeft:"auto", display:"flex", gap:"4px", alignItems:"center" }}>
+          <span style={{ fontSize:"9px", color:"#475569" }}>Subtotal</span>
+          <span style={{ fontFamily:"monospace", fontSize:"11px", fontWeight:700, color:"#60a5fa" }}>
+            {counselTotal.toLocaleString()}
+          </span>
+        </div>
+      </div>
+
+      {/* Combined total */}
+      <div style={{ borderTop:"1px solid #1e293b", paddingTop:"8px",
+        display:"flex", justifyContent:"flex-end", gap:"6px", alignItems:"center" }}>
+        <span style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.1em", color:"#475569", textTransform:"uppercase" }}>Combined Total</span>
+        <span style={{ fontFamily:"monospace", fontSize:"14px", fontWeight:700, color:"#e2e8f0" }}>
+          {combinedTotal.toLocaleString()}
         </span>
       </div>
     </div>
@@ -1129,7 +1197,7 @@ export default function MultiAgentReview({ email }: { email: string }) {
         )}
 
         {/* Token summary */}
-        {tokenLog.length > 0 && <TokenSummary tokenLog={tokenLog} />}
+        {tokenLog.length > 0 && <TokenSummary tokenLog={tokenLog} enhancementTokenLog={enhancementTokenUsage} />}
 
       </div>
     </div>
