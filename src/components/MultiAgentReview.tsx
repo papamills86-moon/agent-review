@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 // ─── Models (labels only — execution happens server-side) ────────────────────
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
@@ -360,6 +360,82 @@ const SAMPLES = [
     text:"Security audit finding: The analyze-item Edge Function does not verify user JWTs before executing. Any request with a valid anon key can trigger item analysis. This function has been live for 6 months and processes uploaded images." },
 ];
 
+// ─── Enhancement Types & Helpers ──────────────────────────────────────────────
+
+/**
+ * EnhancementPhase drives the enhancement wizard (pre-counsel).
+ * Once transitioned to "counsel-review", the existing `phase` state
+ * machine takes over for the multi-agent review. The two machines
+ * run independently; enhancementPhase tracks user-facing enhancement
+ * UI, while `phase` tracks counsel results.
+ *
+ * "done" is reached when both the enhancement flow AND counsel are
+ * complete (phase === "done"). The final useEffect below drives this.
+ */
+type EnhancementPhase =
+  | "idle"           // Before enhancement starts
+  | "enhancing"      // prompt-enhance Edge Function in flight
+  | "user-review"    // Enhancement complete, awaiting user approval
+  | "blocked"        // Security gate fired (user cannot proceed)
+  | "counsel-review" // Multi-agent review in flight
+  | "done";          // Full enhance + counsel pipeline complete
+
+interface EnhancementResult {
+  enhancement_status: "enhanced" | "partial" | "blocked";
+  refined_prompt: string;
+  follow_up_questions: string[];
+  changes_made: string[];
+  security_flags: string[];
+  overall_security_level: "clean" | "caution" | "blocked";
+  inferred_intent: string;
+}
+
+interface TokenUsageEntry {
+  type: "compress" | "agent" | "orchestrator";
+  id?: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+interface PromptEnhanceResponse {
+  enhancementResult: EnhancementResult;
+  tokenUsage: TokenUsageEntry[];
+}
+
+async function callEnhanceFunction(
+  body: { input: string; email: string }
+): Promise<PromptEnhanceResponse> {
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/prompt-enhance`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "x-agent-secret": import.meta.env.VITE_EDGE_FUNCTION_SECRET,
+      "Content-Type": "application/json",
+      "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,  // REQUIRED by Supabase gateway
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Enhancement failed ${response.status}: ${errorText}`);
+  }
+  return response.json();
+}
+
+function buildFinalPrompt(
+  refinedPrompt: string,
+  questions: string[],
+  answers: string[]
+): string {
+  const answered = questions
+    .map((q, i) => answers[i]?.trim()
+      ? `Q: ${q}\nA: ${answers[i].trim()}`
+      : null)
+    .filter(Boolean);
+  if (!answered.length) return refinedPrompt;
+  return `${refinedPrompt}\n\n---\nAdditional context:\n${answered.join("\n\n")}`;
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function MultiAgentReview({ email }: { email: string }) {
   const [input, setInput] = useState("");
@@ -375,6 +451,18 @@ export default function MultiAgentReview({ email }: { email: string }) {
   const [phase, setPhase] = useState<"idle" | "reviewing" | "done" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [tokenLog, setTokenLog] = useState<any[]>([]);
+
+  // Enhancement state machine
+  const [enhancementPhase, setEnhancementPhase] =
+    useState<EnhancementPhase>("idle");
+  const [originalInput, setOriginalInput] = useState<string>("");
+  const [editableRefinedPrompt, setEditableRefinedPrompt] =
+    useState<string>("");
+  const [enhancementResult, setEnhancementResult] =
+    useState<EnhancementResult | null>(null);
+  const [questionAnswers, setQuestionAnswers] = useState<string[]>([]);
+  const [enhancementTokenUsage, setEnhancementTokenUsage] =
+    useState<TokenUsageEntry[] | null>(null);
 
   const activeAgents = ALL_AGENTS.filter(a => enabledAgents[a.id]);
   const needsCompression = input.length > INPUT_COMPRESS_THRESHOLD;
@@ -448,6 +536,104 @@ export default function MultiAgentReview({ email }: { email: string }) {
     setTokenLog([]); setErrorMsg("");
     setPhase("idle");
   };
+
+  async function handleEnhance() {
+    if (!input.trim()) return;
+    setOriginalInput(input);
+    setEnhancementPhase("enhancing");
+    setEnhancementResult(null);
+    setEditableRefinedPrompt("");
+    setQuestionAnswers([]);
+    setEnhancementTokenUsage(null);
+    try {
+      const response = await callEnhanceFunction({
+        input: input.trim(),
+        email
+      });
+      const result = response.enhancementResult;
+      // Validate response shape — if undefined, throw explicitly
+      if (!result) throw new Error("Invalid response from enhancement service");
+
+      setEnhancementTokenUsage(response.tokenUsage ?? []);
+      if (result.enhancement_status === "blocked") {
+        setEnhancementResult(result);
+        setEnhancementPhase("blocked");
+        return;
+      }
+      setEnhancementResult(result);
+      setEditableRefinedPrompt(result.refined_prompt ?? "");
+      setQuestionAnswers(
+        new Array(result.follow_up_questions?.length ?? 0).fill("")
+      );
+      setEnhancementPhase("user-review");
+    } catch (err) {
+      // Enhancement service unavailable or invalid response — graceful fallback.
+      // User can still submit original prompt to counsel.
+      const fallback: EnhancementResult = {
+        enhancement_status: "partial",  // indicates graceful fallback, not blocked
+        refined_prompt: input,
+        follow_up_questions: [],
+        changes_made: [],
+        security_flags: [
+          "Enhancement service unavailable — proceeding with your original prompt"
+        ],
+        overall_security_level: "clean",
+        inferred_intent: ""
+      };
+      setEnhancementResult(fallback);
+      setEditableRefinedPrompt(input);
+      setEnhancementPhase("user-review");
+    }
+  }
+
+  function handleSendToCounsel() {
+    // Guard against double-submission.
+    if (enhancementPhase !== "user-review") return;
+
+    const finalPrompt = buildFinalPrompt(
+      editableRefinedPrompt,
+      enhancementResult?.follow_up_questions ?? [],
+      questionAnswers
+    );
+    setInput(finalPrompt);
+    setEnhancementPhase("counsel-review");
+    // runReview will be triggered by the useEffect below after state flush.
+  }
+
+  function resetEnhancement() {
+    // Clear enhancement state
+    setEnhancementPhase("idle");
+    setOriginalInput("");
+    setEditableRefinedPrompt("");
+    setEnhancementResult(null);
+    setQuestionAnswers([]);
+    setEnhancementTokenUsage(null);
+    // Reset the existing counsel pipeline too
+    reset();
+  }
+
+  // Trigger runReview after state flush
+  useEffect(() => {
+    // Only fire when:
+    // 1. Enhancement flow has prepared the final prompt
+    // 2. Input state is flushed and ready
+    // 3. Existing counsel pipeline is idle (not already running)
+    if (
+      enhancementPhase === "counsel-review" &&
+      input.trim() &&
+      phase === "idle"
+    ) {
+      runReview();
+    }
+  }, [enhancementPhase, input, phase, runReview]);
+
+  // Finalize enhancement flow
+  useEffect(() => {
+    // When counsel pipeline finishes, mark enhancement flow complete
+    if (enhancementPhase === "counsel-review" && phase === "done") {
+      setEnhancementPhase("done");
+    }
+  }, [enhancementPhase, phase]);
 
   const sortedActiveAgents = phase === "done"
     ? [...activeAgents].sort((a,b) =>
