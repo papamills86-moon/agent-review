@@ -335,22 +335,8 @@ Deno.serve(async (req) => {
     const tRequest = performance.now();
     const requestId = genRequestId();
 
-    // Resolve JWT identity (before body parse — uses only headers)
-    const jwtEmail = await resolveIdentity(req);
-
-    // Parse request body
-    const {
-      input,
-      email: bodyEmail,
-      source_app: sourceApp = "unknown",
-    } = (await req.json()) as {
-      input: string;
-      email: string;
-      source_app?: string;
-    };
-
-    // Resolve final identity: JWT takes precedence over body email
-    const resolvedEmail = jwtEmail ?? bodyEmail?.trim().toLowerCase() ?? null;
+    // Resolve JWT identity — required, no fallback
+    const resolvedEmail = await resolveIdentity(req);
     if (!resolvedEmail) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
@@ -358,14 +344,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Log auth mismatch during dual-auth window (switches rate limit key — acceptable)
-    if (jwtEmail && bodyEmail && jwtEmail !== bodyEmail.trim().toLowerCase()) {
-      console.warn(`Auth mismatch: JWT=${jwtEmail} body=${bodyEmail} — using JWT`);
-    }
+    // Parse request body
+    const {
+      input,
+      source_app: sourceApp = "unknown",
+    } = (await req.json()) as {
+      input: string;
+      source_app?: string;
+    };
 
     const log = createLogger(requestId, sourceApp, "prompt-enhance");
-    // NOTE: request_in uses resolvedEmail (verified identity) for audit trail.
-    log("request_in", { email: resolvedEmail, auth_mode: jwtEmail ? "jwt" : "legacy", input_length: input?.length ?? 0 });
+    log("request_in", { email: resolvedEmail, auth_mode: "jwt", input_length: input?.length ?? 0 });
 
     // Rate limit check (keyed to resolvedEmail — verified identity)
     const now = Date.now();

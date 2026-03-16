@@ -88,21 +88,22 @@ function tokenEstimate(text: string) {
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error("SESSION_EXPIRED");
   return {
     "Content-Type": "application/json",
     apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
     "x-agent-secret": import.meta.env.VITE_EDGE_FUNCTION_SECRET,
-    Authorization: `Bearer ${session?.access_token ?? ""}`,
+    Authorization: `Bearer ${session.access_token}`,
   };
 }
 
-async function callEdgeFunction(input: string, agents: string[], email: string) {
+async function callEdgeFunction(input: string, agents: string[]) {
   const res = await fetch(
     `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/multi-agent-review`,
     {
       method: "POST",
       headers: await getAuthHeaders(),
-      body: JSON.stringify({ input, agents, email, source_app: "agent-counsel" }),
+      body: JSON.stringify({ input, agents, source_app: "agent-counsel" }),
     }
   );
   if (!res.ok) {
@@ -478,7 +479,7 @@ interface PromptEnhanceResponse {
 }
 
 async function callEnhanceFunction(
-  body: { input: string; email: string }
+  body: { input: string }
 ): Promise<PromptEnhanceResponse> {
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/prompt-enhance`;
   const response = await fetch(url, {
@@ -567,7 +568,7 @@ export default function MultiAgentReview({ email }: { email: string }) {
     try {
       // Single Edge Function call — it handles compression, fan-out, and orchestration
       const agentIds = activeAgents.map(a => a.id);
-      const payload = await callEdgeFunction(input, agentIds, email);
+      const payload = await callEdgeFunction(input, agentIds);
 
       // Populate agent results all at once
       setAgentResults(payload.agentResults);
@@ -595,6 +596,10 @@ export default function MultiAgentReview({ email }: { email: string }) {
       setTokenLog(payload.tokenUsage);
       setPhase("done");
     } catch (err: any) {
+      if (err.message === "SESSION_EXPIRED") {
+        await supabase.auth.signOut();
+        return;
+      }
       setPhase("error");
       setErrorMsg(err.message ?? "Unknown error");
       setAgentLoading(Object.fromEntries(activeAgents.map(a => [a.id, false])));
@@ -619,8 +624,7 @@ export default function MultiAgentReview({ email }: { email: string }) {
     setEnhancementTokenUsage(null);
     try {
       const response = await callEnhanceFunction({
-        input: input.trim(),
-        email
+        input: input.trim()
       });
       const result = response.enhancementResult;
       // Validate response shape — if undefined, throw explicitly
@@ -638,7 +642,11 @@ export default function MultiAgentReview({ email }: { email: string }) {
         new Array(result.follow_up_questions?.length ?? 0).fill("")
       );
       setEnhancementPhase("user-review");
-    } catch (err) {
+    } catch (err: any) {
+      if (err.message === "SESSION_EXPIRED") {
+        await supabase.auth.signOut();
+        return;
+      }
       // Enhancement service unavailable or invalid response — graceful fallback.
       // User can still submit original prompt to counsel.
       const fallback: EnhancementResult = {

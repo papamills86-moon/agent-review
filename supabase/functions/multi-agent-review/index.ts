@@ -277,24 +277,8 @@ Deno.serve(async (req) => {
     const tRequest = performance.now();
     const requestId = genRequestId();
 
-    // Resolve JWT identity (before body parse — uses only headers)
-    const jwtEmail = await resolveIdentity(req);
-
-    // Parse request body
-    const {
-      input,
-      agents,
-      email: bodyEmail,
-      source_app: sourceApp = "unknown",
-    } = (await req.json()) as {
-      input: string;
-      agents: string[];
-      email: string;
-      source_app?: string;
-    };
-
-    // Resolve final identity: JWT takes precedence over body email
-    const resolvedEmail = jwtEmail ?? bodyEmail?.trim().toLowerCase() ?? null;
+    // Resolve JWT identity — required, no fallback
+    const resolvedEmail = await resolveIdentity(req);
     if (!resolvedEmail) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
@@ -302,16 +286,19 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Log auth mismatch during dual-auth window (switches rate limit key — acceptable)
-    if (jwtEmail && bodyEmail && jwtEmail !== bodyEmail.trim().toLowerCase()) {
-      console.warn(`Auth mismatch: JWT=${jwtEmail} body=${bodyEmail} — using JWT`);
-    }
+    // Parse request body
+    const {
+      input,
+      agents,
+      source_app: sourceApp = "unknown",
+    } = (await req.json()) as {
+      input: string;
+      agents: string[];
+      source_app?: string;
+    };
 
     const log = createLogger(requestId, sourceApp, "multi-agent-review");
-    // NOTE: request_in uses resolvedEmail (verified identity) for audit trail.
-    // Denied emails are still logged here for observability into all
-    // authenticated-but-unauthorized attempts.
-    log("request_in", { email: resolvedEmail, auth_mode: jwtEmail ? "jwt" : "legacy", agent_count: agents?.length ?? 0 });
+    log("request_in", { email: resolvedEmail, auth_mode: "jwt", agent_count: agents?.length ?? 0 });
 
     // Rate limit check (keyed to resolvedEmail — verified identity)
     const now = Date.now();
