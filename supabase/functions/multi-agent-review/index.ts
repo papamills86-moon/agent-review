@@ -14,7 +14,7 @@ const requestCounts = new Map<string, { count: number; resetAt: number }>();
 // ─── Models ──────────────────────────────────────────────────────────────────
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
 const MODEL_ORCH = "claude-sonnet-4-20250514";
-const TOKENS_AGENT = 650;
+const TOKENS_AGENT = 1024;
 const TOKENS_COMPRESS = 300;
 const TOKENS_ORCH = 1500;
 const INPUT_COMPRESS_THRESHOLD = 600; // chars
