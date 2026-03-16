@@ -7,6 +7,24 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-agent-secret",
 };
 
+// ─── Structured Logging ─────────────────────────────────────────────────
+function genRequestId(): string {
+  return "agt_" + Math.random().toString(16).slice(2, 8);
+}
+
+function createLogger(requestId: string, sourceApp: string, fnName: string) {
+  return function log(phase: string, extra: Record<string, unknown> = {}) {
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      request_id: requestId,
+      source_app: sourceApp,
+      fn: fnName,
+      phase,
+      ...extra,
+    }));
+  };
+}
+
 // ─── Rate Limiting ───────────────────────────────────────────────────────
 const MAX_REQUESTS_PER_HOUR = 20;
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
@@ -293,11 +311,22 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const tRequest = performance.now();
+    const requestId = genRequestId();
+
     // Parse request body
-    const { input, email } = (await req.json()) as {
+    const {
+      input,
+      email,
+      source_app: sourceApp = "unknown",
+    } = (await req.json()) as {
       input: string;
       email: string;
+      source_app?: string;
     };
+
+    const log = createLogger(requestId, sourceApp, "prompt-enhance");
+    log("request_in", { email: email ?? "missing", input_length: input?.length ?? 0 });
 
     // Verify email against allowlist
     if (!email || typeof email !== "string") {
@@ -353,13 +382,22 @@ Deno.serve(async (req) => {
     // Step 1 — Compress input if long
     let enhanceInput = input;
     if (input.length > INPUT_COMPRESS_THRESHOLD) {
+      const tCompress = performance.now();
+      log("compress", { status: "start", input_length: input.length });
       const { compressed, inputTokens, outputTokens } = await compressInput(input);
       enhanceInput = compressed;
       tokenUsage.push({ type: "compress", inputTokens, outputTokens });
+      log("compress", {
+        status: "ok",
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        duration_ms: Math.round(performance.now() - tCompress),
+      });
     }
 
     // Step 2 — Parallel enhancer agent calls
     const agentPromises = AGENT_IDS.map(async (id) => {
+      const tAgent = performance.now();
       const { parsed, inputTokens, outputTokens } = await callClaude(
         AGENT_PROMPTS[id],
         `Analyze this prompt:\n\n${enhanceInput}`,
@@ -367,6 +405,13 @@ Deno.serve(async (req) => {
         TOKENS_AGENT,
       );
       tokenUsage.push({ type: "agent", id, inputTokens, outputTokens });
+      log("agent", {
+        agent_id: id,
+        status: "ok",
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        duration_ms: Math.round(performance.now() - tAgent),
+      });
       return { id, result: parsed };
     });
 
@@ -403,6 +448,7 @@ ${JSON.stringify(validated.intentAnalyst)}
 
 Synthesize per your instructions. Apply security gate first.`;
 
+    const tOrch = performance.now();
     const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
 
@@ -443,6 +489,22 @@ Synthesize per your instructions. Apply security gate first.`;
     }
 
     tokenUsage.push({ type: "orchestrator", inputTokens: orchInputTokens, outputTokens: orchOutputTokens });
+    log("orchestrator", {
+      status: "ok",
+      input_tokens: orchInputTokens,
+      output_tokens: orchOutputTokens,
+      duration_ms: Math.round(performance.now() - tOrch),
+    });
+
+    // Log final metrics
+    const totalTokens = tokenUsage.reduce(
+      (s, t) => s + t.inputTokens + t.outputTokens, 0
+    );
+    log("request_out", {
+      status: "ok",
+      total_tokens: totalTokens,
+      total_duration_ms: Math.round(performance.now() - tRequest),
+    });
 
     // Return combined payload
     return new Response(
@@ -450,6 +512,16 @@ Synthesize per your instructions. Apply security gate first.`;
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    try {
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(),
+        fn: "prompt-enhance",
+        phase: "error",
+        status: "error",
+        message: errMsg,
+      }));
+    } catch { /* logging must never throw */ }
     const message = err instanceof Error ? err.message : "Internal server error";
     return new Response(
       JSON.stringify({ error: message }),

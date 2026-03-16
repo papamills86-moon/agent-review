@@ -95,7 +95,7 @@ async function callEdgeFunction(input: string, agents: string[], email: string) 
         apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
         "x-agent-secret": import.meta.env.VITE_EDGE_FUNCTION_SECRET,
       },
-      body: JSON.stringify({ input, agents, email }),
+      body: JSON.stringify({ input, agents, email, source_app: "agent-counsel" }),
     }
   );
   if (!res.ok) {
@@ -481,7 +481,7 @@ async function callEnhanceFunction(
       "Content-Type": "application/json",
       "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,  // REQUIRED by Supabase gateway
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify({ ...body, source_app: "agent-counsel" })
   });
   if (!response.ok) {
     const errorText = await response.text();

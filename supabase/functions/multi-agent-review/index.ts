@@ -7,6 +7,24 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-agent-secret",
 };
 
+// ─── Structured Logging ─────────────────────────────────────────────────
+function genRequestId(): string {
+  return "agt_" + Math.random().toString(16).slice(2, 8);
+}
+
+function createLogger(requestId: string, sourceApp: string, fnName: string) {
+  return function log(phase: string, extra: Record<string, unknown> = {}) {
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      request_id: requestId,
+      source_app: sourceApp,
+      fn: fnName,
+      phase,
+      ...extra,
+    }));
+  };
+}
+
 // ─── Rate Limiting ───────────────────────────────────────────────────────
 const MAX_REQUESTS_PER_HOUR = 10;
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
@@ -235,12 +253,27 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const tRequest = performance.now();
+    const requestId = genRequestId();
+
     // Parse request body
-    const { input, agents, email } = (await req.json()) as {
+    const {
+      input,
+      agents,
+      email,
+      source_app: sourceApp = "unknown",
+    } = (await req.json()) as {
       input: string;
       agents: string[];
       email: string;
+      source_app?: string;
     };
+
+    const log = createLogger(requestId, sourceApp, "multi-agent-review");
+    // NOTE: request_in fires after secret check but before email validation.
+    // Denied emails are still logged here for observability into all
+    // authenticated-but-unauthorized attempts.
+    log("request_in", { email: email ?? "missing", agent_count: agents?.length ?? 0 });
 
     // Verify email against allowlist
     if (!email || typeof email !== "string") {
@@ -305,13 +338,22 @@ Deno.serve(async (req) => {
     // Step 1 — Compress input if long
     let reviewInput = input;
     if (input.length > INPUT_COMPRESS_THRESHOLD) {
+      const tCompress = performance.now();
+      log("compress", { status: "start", input_length: input.length });
       const { compressed, inputTokens, outputTokens } = await compressInput(input);
       reviewInput = compressed;
       tokenUsage.push({ type: "compress", inputTokens, outputTokens });
+      log("compress", {
+        status: "ok",
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        duration_ms: Math.round(performance.now() - tCompress),
+      });
     }
 
     // Step 2 — Parallel agent calls
     const agentPromises = validAgentIds.map(async (id) => {
+      const tAgent = performance.now();
       const { parsed, inputTokens, outputTokens } = await callClaude(
         AGENT_PROMPTS[id],
         `Review this:\n\n${reviewInput}`,
@@ -319,6 +361,13 @@ Deno.serve(async (req) => {
         TOKENS_AGENT,
       );
       tokenUsage.push({ type: "agent", id, inputTokens, outputTokens });
+      log("agent", {
+        agent_id: id,
+        status: "ok",
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        duration_ms: Math.round(performance.now() - tAgent),
+      });
       return { id, name: AGENT_NAMES[id] ?? id, result: parsed };
     });
 
@@ -351,6 +400,7 @@ Deno.serve(async (req) => {
       }),
     ].join("\n\n");
 
+    const tOrch = performance.now();
     const { parsed: orchestratorResult, inputTokens: oIn, outputTokens: oOut } = await callClaude(
       ORCH_SYSTEM,
       orchInput,
@@ -358,6 +408,22 @@ Deno.serve(async (req) => {
       TOKENS_ORCH,
     );
     tokenUsage.push({ type: "orch", inputTokens: oIn, outputTokens: oOut });
+    log("orchestrator", {
+      status: "ok",
+      input_tokens: oIn,
+      output_tokens: oOut,
+      duration_ms: Math.round(performance.now() - tOrch),
+    });
+
+    // Log final metrics
+    const totalTokens = tokenUsage.reduce(
+      (s, t) => s + t.inputTokens + t.outputTokens, 0
+    );
+    log("request_out", {
+      status: "ok",
+      total_tokens: totalTokens,
+      total_duration_ms: Math.round(performance.now() - tRequest),
+    });
 
     // Return combined payload
     return new Response(
@@ -365,6 +431,17 @@ Deno.serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    // Best-effort structured error log — log/requestId may not exist if parse failed
+    try {
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(),
+        fn: "multi-agent-review",
+        phase: "error",
+        status: "error",
+        message: errMsg,
+      }));
+    } catch { /* logging must never throw */ }
     const message = err instanceof Error ? err.message : "Internal server error";
     return new Response(
       JSON.stringify({ error: message }),

@@ -34,7 +34,7 @@ function LoginGate({ children }: { children: (email: string) => React.ReactNode 
           apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
           'x-agent-secret': import.meta.env.VITE_EDGE_FUNCTION_SECRET,
         },
-        body: JSON.stringify({ email: addr }),
+        body: JSON.stringify({ email: addr, source_app: "agent-counsel" }),
       },
     );
     if (!res.ok) throw new Error('Validation request failed');
