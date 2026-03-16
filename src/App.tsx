@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import MultiAgentReview from './components/MultiAgentReview';
 import { supabase } from './lib/supabase';
 
-function LoginGate({ children }: { children: (email: string) => React.ReactNode }) {
+function LoginGate({ children }: { children: () => React.ReactNode }) {
   const [step, setStep] = useState<'email' | 'otp' | 'authed'>('email');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -163,7 +163,7 @@ function LoginGate({ children }: { children: (email: string) => React.ReactNode 
           Sign out
         </button>
       </div>
-      {children(authedEmail!)}
+      {children()}
     </>
   );
 }
@@ -198,7 +198,7 @@ const styles = {
 export default function App() {
   return (
     <LoginGate>
-      {(email) => <MultiAgentReview email={email} />}
+      {() => <MultiAgentReview />}
     </LoginGate>
   );
 }

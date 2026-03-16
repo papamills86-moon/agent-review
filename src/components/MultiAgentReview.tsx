@@ -509,7 +509,7 @@ function buildFinalPrompt(
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
-export default function MultiAgentReview({ email }: { email: string }) {
+export default function MultiAgentReview() {
   const [input, setInput] = useState("");
   const [enabledAgents, setEnabledAgents] = useState<Record<string, boolean>>(
     () => Object.fromEntries(ALL_AGENTS.map(a => [a.id, a.defaultOn]))
