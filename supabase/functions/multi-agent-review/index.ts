@@ -313,19 +313,6 @@ Deno.serve(async (req) => {
     // authenticated-but-unauthorized attempts.
     log("request_in", { email: resolvedEmail, auth_mode: jwtEmail ? "jwt" : "legacy", agent_count: agents?.length ?? 0 });
 
-    // Verify email against allowlist
-    const allowedRaw = Deno.env.get("ALLOWED_EMAILS") ?? "";
-    const allowedEmails = new Set(
-      allowedRaw.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),
-    );
-
-    if (!allowedEmails.has(resolvedEmail)) {
-      return new Response(JSON.stringify({ error: "Unauthorized email" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     // Rate limit check (keyed to resolvedEmail — verified identity)
     const now = Date.now();
     const entry = requestCounts.get(resolvedEmail);

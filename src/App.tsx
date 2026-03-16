@@ -40,28 +40,6 @@ function LoginGate({ children }: { children: (email: string) => React.ReactNode 
     setLoading(true);
     setError('');
     try {
-      // Allowlist check FIRST — never send OTP to unauthorized email
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-email`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-            'x-agent-secret': import.meta.env.VITE_EDGE_FUNCTION_SECRET,
-          },
-          body: JSON.stringify({ email: trimmed, source_app: 'agent-counsel' }),
-        },
-      );
-      if (!res.ok) throw new Error('Validation request failed');
-      const data = await res.json();
-
-      if (data.allowed !== true) {
-        setError('Access denied. Your email is not on the approved list.');
-        return;
-      }
-
-      // Allowlist passed — send OTP
       const { error: otpError } = await supabase.auth.signInWithOtp({
         email: trimmed,
         options: { shouldCreateUser: true },
@@ -74,7 +52,7 @@ function LoginGate({ children }: { children: (email: string) => React.ReactNode 
 
       setStep('otp');
     } catch {
-      setError('Unable to verify email. Please try again.');
+      setError('Failed to send code. Please try again.');
     } finally {
       setLoading(false);
     }
