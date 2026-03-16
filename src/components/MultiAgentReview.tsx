@@ -531,6 +531,7 @@ export default function MultiAgentReview({ email }: { email: string }) {
   const [questionAnswers, setQuestionAnswers] = useState<string[]>([]);
   const [enhancementTokenUsage, setEnhancementTokenUsage] =
     useState<TokenUsageEntry[] | null>(null);
+  const [reviewedPromptOpen, setReviewedPromptOpen] = useState(false);
 
   const activeAgents = ALL_AGENTS.filter(a => enabledAgents[a.id]);
   const needsCompression = input.length > INPUT_COMPRESS_THRESHOLD;
@@ -1164,6 +1165,33 @@ export default function MultiAgentReview({ email }: { email: string }) {
             <span style={{ fontSize:"11px", color:"#94a3b8" }}>
               Prompt was refined before counsel review · {enhancementResult.changes_made?.length ?? 0} changes
             </span>
+          </div>
+        )}
+
+        {/* Reviewed Prompt (collapsible) */}
+        {(enhancementPhase === "counsel-review" || enhancementPhase === "done") && enhancementResult && (
+          <div style={{
+            border:"1px solid rgba(167,139,250,0.15)",
+            borderLeft:"3px solid #a78bfa",
+            borderRadius:"6px", background:"rgba(167,139,250,0.07)",
+            padding:"14px 18px", marginBottom:"16px", transition:"all 0.3s"
+          }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+              cursor:"pointer" }}
+              onClick={() => setReviewedPromptOpen(o => !o)}>
+              <span style={{ fontWeight:600, fontSize:"13px", color:"#e2e8f0" }}>Reviewed Prompt</span>
+              <span style={{ color:"#94a3b8", fontSize:"11px" }}>
+                {reviewedPromptOpen ? "Hide reviewed prompt ▲" : "Show reviewed prompt ▼"}
+              </span>
+            </div>
+            {reviewedPromptOpen && (
+              <div style={{
+                marginTop:"12px", whiteSpace:"pre-wrap",
+                color:"#94a3b8", fontSize:"12px", lineHeight:1.65
+              }}>
+                {input}
+              </div>
+            )}
           </div>
         )}
 
