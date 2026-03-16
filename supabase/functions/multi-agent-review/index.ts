@@ -14,7 +14,7 @@ const requestCounts = new Map<string, { count: number; resetAt: number }>();
 // ─── Models ──────────────────────────────────────────────────────────────────
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
 const MODEL_ORCH = "claude-sonnet-4-20250514";
-const TOKENS_AGENT = 600;
+const TOKENS_AGENT = 650;
 const TOKENS_COMPRESS = 300;
 const TOKENS_ORCH = 800;
 const INPUT_COMPRESS_THRESHOLD = 600; // chars
@@ -74,19 +74,39 @@ JSON only, no markdown:
 
 // ─── JSON Recovery Helpers ───────────────────────────────────────────────────
 function repairJson(raw: string): Record<string, unknown> | null {
-  // Strategy 1: slice to last closing brace and try parse
-  const lastBrace = raw.lastIndexOf('}');
-  if (lastBrace !== -1) {
-    try { return JSON.parse(raw.slice(0, lastBrace + 1)); } catch { /* continue */ }
-  }
-  // Strategy 2: attempt structural closure with progressively deeper suffixes
-  // Order: close open string value → close open array+object → close nested array
-  if (raw.trim().startsWith('{')) {
-    for (const suffix of ['"}', '"]}', ']}']) {
-      try { return JSON.parse(raw + suffix); } catch { /* continue */ }
+  let s = raw.trimEnd();
+
+  // Find last unescaped closing quote
+  let lastQuote = -1;
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (s[i] === '"' && (i === 0 || s[i - 1] !== '\\')) {
+      lastQuote = i;
+      break;
     }
   }
-  return null;
+  if (lastQuote === -1) return null;
+
+  // Truncate to just after that quote
+  s = s.slice(0, lastQuote + 1);
+
+  // Count unmatched brackets and braces, then close them
+  let openBrackets = 0;
+  let openBraces = 0;
+  for (const ch of s) {
+    if (ch === '[') openBrackets++;
+    else if (ch === ']') openBrackets--;
+    else if (ch === '{') openBraces++;
+    else if (ch === '}') openBraces--;
+  }
+
+  s += ']'.repeat(Math.max(0, openBrackets));
+  s += '}'.repeat(Math.max(0, openBraces));
+
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 }
 
 function extractFromRaw(raw: string): Record<string, unknown> {
