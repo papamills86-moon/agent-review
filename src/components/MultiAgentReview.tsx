@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { supabase } from "../lib/supabase";
 
 // ─── Models (labels only — execution happens server-side) ────────────────────
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
@@ -85,16 +86,22 @@ function tokenEstimate(text: string) {
   return Math.ceil(text.length / 4);
 }
 
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  return {
+    "Content-Type": "application/json",
+    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+    "x-agent-secret": import.meta.env.VITE_EDGE_FUNCTION_SECRET,
+    Authorization: `Bearer ${session?.access_token ?? ""}`,
+  };
+}
+
 async function callEdgeFunction(input: string, agents: string[], email: string) {
   const res = await fetch(
     `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/multi-agent-review`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-        "x-agent-secret": import.meta.env.VITE_EDGE_FUNCTION_SECRET,
-      },
+      headers: await getAuthHeaders(),
       body: JSON.stringify({ input, agents, email, source_app: "agent-counsel" }),
     }
   );
@@ -476,11 +483,7 @@ async function callEnhanceFunction(
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/prompt-enhance`;
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "x-agent-secret": import.meta.env.VITE_EDGE_FUNCTION_SECRET,
-      "Content-Type": "application/json",
-      "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,  // REQUIRED by Supabase gateway
-    },
+    headers: await getAuthHeaders(),
     body: JSON.stringify({ ...body, source_app: "agent-counsel" })
   });
   if (!response.ok) {
