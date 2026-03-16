@@ -1,4 +1,25 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+// ─── Supabase Admin (module-scope — reused across warm isolate invocations) ──
+const supabaseAdmin = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  { auth: { autoRefreshToken: false, persistSession: false } },
+);
+
+async function resolveIdentity(req: Request): Promise<string | null> {
+  try {
+    const authHeader = req.headers.get("Authorization") ?? "";
+    if (!authHeader.startsWith("Bearer ")) return null;
+    const token = authHeader.slice(7);
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !user?.email) return null;
+    return user.email.toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
 const corsHeaders = {
@@ -256,11 +277,14 @@ Deno.serve(async (req) => {
     const tRequest = performance.now();
     const requestId = genRequestId();
 
+    // Resolve JWT identity (before body parse — uses only headers)
+    const jwtEmail = await resolveIdentity(req);
+
     // Parse request body
     const {
       input,
       agents,
-      email,
+      email: bodyEmail,
       source_app: sourceApp = "unknown",
     } = (await req.json()) as {
       input: string;
@@ -269,36 +293,42 @@ Deno.serve(async (req) => {
       source_app?: string;
     };
 
-    const log = createLogger(requestId, sourceApp, "multi-agent-review");
-    // NOTE: request_in fires after secret check but before email validation.
-    // Denied emails are still logged here for observability into all
-    // authenticated-but-unauthorized attempts.
-    log("request_in", { email: email ?? "missing", agent_count: agents?.length ?? 0 });
-
-    // Verify email against allowlist
-    if (!email || typeof email !== "string") {
-      return new Response(JSON.stringify({ error: "Missing email" }), {
+    // Resolve final identity: JWT takes precedence over body email
+    const resolvedEmail = jwtEmail ?? bodyEmail?.trim().toLowerCase() ?? null;
+    if (!resolvedEmail) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    // Log auth mismatch during dual-auth window (switches rate limit key — acceptable)
+    if (jwtEmail && bodyEmail && jwtEmail !== bodyEmail.trim().toLowerCase()) {
+      console.warn(`Auth mismatch: JWT=${jwtEmail} body=${bodyEmail} — using JWT`);
+    }
+
+    const log = createLogger(requestId, sourceApp, "multi-agent-review");
+    // NOTE: request_in uses resolvedEmail (verified identity) for audit trail.
+    // Denied emails are still logged here for observability into all
+    // authenticated-but-unauthorized attempts.
+    log("request_in", { email: resolvedEmail, auth_mode: jwtEmail ? "jwt" : "legacy", agent_count: agents?.length ?? 0 });
+
+    // Verify email against allowlist
     const allowedRaw = Deno.env.get("ALLOWED_EMAILS") ?? "";
     const allowedEmails = new Set(
       allowedRaw.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),
     );
 
-    if (!allowedEmails.has(email.trim().toLowerCase())) {
+    if (!allowedEmails.has(resolvedEmail)) {
       return new Response(JSON.stringify({ error: "Unauthorized email" }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Rate limit check
-    const normalizedEmail = email.trim().toLowerCase();
+    // Rate limit check (keyed to resolvedEmail — verified identity)
     const now = Date.now();
-    const entry = requestCounts.get(normalizedEmail);
+    const entry = requestCounts.get(resolvedEmail);
 
     if (entry && now < entry.resetAt) {
       if (entry.count >= MAX_REQUESTS_PER_HOUR) {
@@ -309,7 +339,7 @@ Deno.serve(async (req) => {
       }
       entry.count++;
     } else {
-      requestCounts.set(normalizedEmail, { count: 1, resetAt: now + 60 * 60 * 1000 });
+      requestCounts.set(resolvedEmail, { count: 1, resetAt: now + 60 * 60 * 1000 });
     }
 
     if (!input || !agents?.length) {
@@ -428,7 +458,7 @@ Deno.serve(async (req) => {
     // Return combined payload
     return new Response(
       JSON.stringify({ agentResults, orchestratorResult, tokenUsage }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-auth-mode": jwtEmail ? "jwt" : "legacy" } },
     );
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
