@@ -16,7 +16,7 @@ const MODEL_AGENT = "claude-haiku-4-5-20251001";
 const MODEL_ORCH = "claude-sonnet-4-20250514";
 const TOKENS_AGENT = 650;
 const TOKENS_COMPRESS = 300;
-const TOKENS_ORCH = 800;
+const TOKENS_ORCH = 1500;
 const INPUT_COMPRESS_THRESHOLD = 600; // chars
 
 // ─── Agent System Prompts ────────────────────────────────────────────────────
@@ -70,7 +70,8 @@ const AGENT_NAMES: Record<string, string> = {
 
 const ORCH_SYSTEM = `Principal Architect. You receive expert reviews and synthesize a final verdict. Identify highest-severity concerns, resolve conflicts, produce actionable verdict.
 JSON only, no markdown:
-{"verdict":"approve|approve_with_conditions|defer|reject","overall_risk":"critical|high|medium|low","rationale":"2-3 sentences","required_actions":["action"],"open_questions":["question"],"approved_to_proceed":true}`;
+{"verdict":"approve|approve_with_conditions|defer|reject","overall_risk":"critical|high|medium|low","rationale":"2-3 sentences","required_actions":["action"],"open_questions":["question"],"approved_to_proceed":true}
+Cite agent names inline using their full names as given (e.g. "per Security Architect", "flagged by Compliance Officer", "raised by QA Lead") in rationale, required_actions, and open_questions.`;
 
 // ─── JSON Recovery Helpers ───────────────────────────────────────────────────
 function repairJson(raw: string): Record<string, unknown> | null {
@@ -332,10 +333,22 @@ Deno.serve(async (req) => {
     const orchInput = [
       `Original request:\n${reviewInput}`,
       "---",
-      ...allResults.map(
-        ({ name, result }) =>
-          `## ${name}\nLevel: ${result.concern_level ?? "?"} | ${result.summary ?? ""}\nFindings: ${((result.findings as string[]) ?? []).join("; ")}\nRec: ${result.recommendation ?? ""}`,
-      ),
+      ...allResults.map(({ name, result }) => {
+        const findings = (result.findings as string[]) ?? [];
+        const questions = (result.questions as string[]) ?? [];
+        const lines = [
+          `## ${name} [${result.concern_level ?? "?"}]`,
+          `Summary: ${result.summary ?? ""}`,
+        ];
+        if (findings.length > 0) {
+          lines.push(`Findings:\n${findings.map((f, i) => `  ${i + 1}. ${f}`).join("\n")}`);
+        }
+        lines.push(`Recommendation: ${result.recommendation ?? ""}`);
+        if (questions.length > 0) {
+          lines.push(`Questions:\n${questions.map((q) => `  - ${q}`).join("\n")}`);
+        }
+        return lines.join("\n");
+      }),
     ].join("\n\n");
 
     const { parsed: orchestratorResult, inputTokens: oIn, outputTokens: oOut } = await callClaude(

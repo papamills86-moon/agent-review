@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
 const MODEL_ORCH  = "claude-sonnet-4-20250514";
 const TOKENS_AGENT = 650; // Must match TOKENS_AGENT in supabase/functions/multi-agent-review/index.ts
-const TOKENS_ORCH  = 800;
+const TOKENS_ORCH  = 1500;
 const INPUT_COMPRESS_THRESHOLD = 600;
 
 // ─── Agent Registry ──────────────────────────────────────────────────────────
