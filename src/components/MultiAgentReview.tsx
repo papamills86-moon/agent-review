@@ -1152,7 +1152,6 @@ export default function MultiAgentReview() {
             members={counselState.selectedMembers}
             allAvailableAgents={
               ALL_AGENTS
-                .filter(a => enabledAgents[a.id])
                 .map(a => ({
                   id: a.id,
                   name: a.name,
