@@ -541,6 +541,7 @@ export default function MultiAgentReview() {
   const [enhancementTokenUsage, setEnhancementTokenUsage] =
     useState<TokenUsageEntry[] | null>(null);
   const [reviewedPromptOpen, setReviewedPromptOpen] = useState(false);
+  const [counselSelectedOpen, setCounselSelectedOpen] = useState(false);
 
   // ─── Counsel Auto-Select ──────────────────────────────────────────────────
   const counselHook = useCounsel();
@@ -1279,6 +1280,70 @@ export default function MultiAgentReview() {
                 color:"#94a3b8", fontSize:"12px", lineHeight:1.65
               }}>
                 {input}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Counsel Selected (collapsible, collapsed by default) */}
+        {counselActive && counselState.selectedMembers.length > 0 && (
+          <div style={{
+            border:"1px solid #1e2d3d",
+            borderLeft:"3px solid #3b82f6",
+            borderRadius:"6px", background:"rgba(59,130,246,0.04)",
+            padding:"14px 18px", marginBottom:"16px", transition:"all 0.3s"
+          }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+              cursor:"pointer" }}
+              onClick={() => setCounselSelectedOpen(o => !o)}>
+              <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                <span style={{ fontWeight:600, fontSize:"13px", color:"#e2e8f0" }}>Counsel Selected</span>
+                <span style={{
+                  fontSize:"10px", color:"#64748b", background:"#1e293b",
+                  padding:"2px 6px", borderRadius:"3px"
+                }}>
+                  {counselState.selectedMembers.filter(m => m.status !== 'manually-removed').length} reviewers
+                </span>
+              </div>
+              <span style={{ color:"#94a3b8", fontSize:"11px" }}>
+                {counselSelectedOpen ? "Hide panel ▲" : "Show panel ▼"}
+              </span>
+            </div>
+            {counselSelectedOpen && (
+              <div style={{ marginTop:"12px", display:"flex", flexWrap:"wrap", gap:"8px" }}>
+                {counselState.selectedMembers
+                  .filter(m => m.status !== 'manually-removed')
+                  .map(m => (
+                    <div key={m.id} style={{
+                      background:"#1e293b", borderRadius:"6px", padding:"8px 12px",
+                      border:"1px solid #1e2d3d", display:"flex", flexDirection:"column", gap:"4px",
+                      minWidth:"140px"
+                    }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
+                        <span style={{ fontWeight:600, fontSize:"12px", color:"#e2e8f0" }}>{m.name}</span>
+                        <span style={{
+                          fontSize:"10px", padding:"1px 5px", borderRadius:"3px",
+                          background: m.status === 'auto-selected' ? '#1e3a5f' : '#14532d',
+                          color: m.status === 'auto-selected' ? '#3b82f6' : '#22c55e'
+                        }}>
+                          {m.status === 'auto-selected' ? 'Auto' : 'Added'}
+                        </span>
+                      </div>
+                      <div style={{ display:"flex", gap:"3px", flexWrap:"wrap" }}>
+                        {m.expertiseTags.slice(0, 3).map(tag => (
+                          <span key={tag} style={{
+                            fontSize:"9px", color:"#64748b", background:"#0f172a",
+                            padding:"1px 4px", borderRadius:"3px"
+                          }}>{tag}</span>
+                        ))}
+                      </div>
+                      {m.confidenceScore < 1 && (
+                        <span style={{ fontSize:"10px", color:"#94a3b8" }}>
+                          {Math.round(m.confidenceScore * 100)}% confidence
+                        </span>
+                      )}
+                    </div>
+                  ))}
               </div>
             )}
           </div>
