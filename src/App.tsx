@@ -10,6 +10,7 @@ function LoginGate({ children }: { children: () => React.ReactNode }) {
   const [authedEmail, setAuthedEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState<'review' | 'enhance'>('review');
 
   // Session management — restore on mount + listen for changes
   useEffect(() => {
@@ -152,8 +153,6 @@ function LoginGate({ children }: { children: () => React.ReactNode }) {
       </div>
     );
   }
-
-  const [activeTab, setActiveTab] = useState<'review' | 'enhance'>('review');
 
   return (
     <>
