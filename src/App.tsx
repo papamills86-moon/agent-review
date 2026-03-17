@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import MultiAgentReview from './components/MultiAgentReview';
+import PromptEnhancer from './components/PromptEnhancer';
 import { supabase } from './lib/supabase';
 
 function LoginGate({ children }: { children: () => React.ReactNode }) {
@@ -152,6 +153,8 @@ function LoginGate({ children }: { children: () => React.ReactNode }) {
     );
   }
 
+  const [activeTab, setActiveTab] = useState<'review' | 'enhance'>('review');
+
   return (
     <>
       <div style={styles.topBar}>
@@ -163,7 +166,31 @@ function LoginGate({ children }: { children: () => React.ReactNode }) {
           Sign out
         </button>
       </div>
-      {children()}
+      <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.1)', marginBottom: 24 }}>
+        <button
+          onClick={() => setActiveTab('review')}
+          style={{
+            padding: '10px 20px', background: 'none', border: 'none',
+            borderBottom: activeTab === 'review' ? '2px solid #6366f1' : '2px solid transparent',
+            color: activeTab === 'review' ? '#e2e8f0' : '#94a3b8',
+            cursor: 'pointer', fontSize: 14, fontFamily: 'inherit',
+          }}
+        >
+          Review
+        </button>
+        <button
+          onClick={() => setActiveTab('enhance')}
+          style={{
+            padding: '10px 20px', background: 'none', border: 'none',
+            borderBottom: activeTab === 'enhance' ? '2px solid #6366f1' : '2px solid transparent',
+            color: activeTab === 'enhance' ? '#e2e8f0' : '#94a3b8',
+            cursor: 'pointer', fontSize: 14, fontFamily: 'inherit',
+          }}
+        >
+          Enhance Prompt
+        </button>
+      </div>
+      {activeTab === 'review' ? children() : <PromptEnhancer />}
     </>
   );
 }

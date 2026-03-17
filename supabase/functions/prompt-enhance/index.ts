@@ -344,17 +344,21 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Parse request body
+    // Parse request body — single req.json() call for all fields
     const {
       input,
       source_app: sourceApp = "unknown",
+      stage,
+      clarifications,
     } = (await req.json()) as {
       input: string;
       source_app?: string;
+      stage?: "initial" | "further";
+      clarifications?: { question: string; answer: string }[];
     };
 
     const log = createLogger(requestId, sourceApp, "prompt-enhance");
-    log("request_in", { email: resolvedEmail, auth_mode: "jwt", input_length: input?.length ?? 0 });
+    log("request_in", { email: resolvedEmail, auth_mode: "jwt", input_length: input?.length ?? 0, stage: stage ?? "legacy" });
 
     // Rate limit check (keyed to resolvedEmail — verified identity)
     const now = Date.now();
@@ -385,6 +389,161 @@ Deno.serve(async (req) => {
       inputTokens: number;
       outputTokens: number;
     }> = [];
+
+    if (stage) {
+      // ─── Stage-aware path (PromptEnhancer component) ────────────────────────
+
+      // Build orchestrator system prompt — never mutate module-level ORCH_SYSTEM
+      let orchSystemPrompt = ORCH_SYSTEM;
+      if (stage === "initial") {
+        orchSystemPrompt += "\n\nAdditionally, populate the existing follow_up_questions " +
+          "array with up to 3 questions that, if answered by the user, would allow for a " +
+          "more targeted enhancement in a follow-up pass. If no clarification is needed, " +
+          "return an empty array.";
+      }
+
+      // Step 1 — Compress input if long
+      let enhanceInput = input;
+      if (input.length > INPUT_COMPRESS_THRESHOLD) {
+        const tCompress = performance.now();
+        log("compress", { status: "start", input_length: input.length });
+        const { compressed, inputTokens, outputTokens } = await compressInput(input);
+        enhanceInput = compressed;
+        tokenUsage.push({ type: "compress", inputTokens, outputTokens });
+        log("compress", {
+          status: "ok",
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          duration_ms: Math.round(performance.now() - tCompress),
+        });
+      }
+
+      // Step 2 — Parallel enhancer agent calls
+      const agentPromises = AGENT_IDS.map(async (id) => {
+        const tAgent = performance.now();
+        const { parsed, inputTokens, outputTokens } = await callClaude(
+          AGENT_PROMPTS[id],
+          `Analyze this prompt:\n\n${enhanceInput}`,
+          MODEL_AGENT,
+          TOKENS_AGENT,
+        );
+        tokenUsage.push({ type: "agent", id, inputTokens, outputTokens });
+        log("agent", {
+          agent_id: id,
+          status: "ok",
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          duration_ms: Math.round(performance.now() - tAgent),
+        });
+        return { id, result: parsed };
+      });
+
+      const allResults = await Promise.all(agentPromises);
+
+      const agentResultsMap: Record<string, Record<string, unknown>> = {};
+      for (const { id, result } of allResults) {
+        agentResultsMap[id] = result;
+      }
+
+      // Step 3 — Validate agent outputs
+      const validated = validateAgentOutputs(
+        agentResultsMap["prompt_engineer"],
+        agentResultsMap["prompt_security"],
+        agentResultsMap["intent_analyst"],
+      );
+
+      // Step 4 — Orchestrator synthesis
+      let orchInput = `Original user prompt:
+"""
+${input}
+"""
+
+---
+
+## Prompt Engineer output:
+${JSON.stringify(validated.promptEngineer)}
+
+## Prompt Security output:
+${JSON.stringify(validated.promptSecurity)}
+
+## Intent Analyst output:
+${JSON.stringify(validated.intentAnalyst)}
+
+Synthesize per your instructions. Apply security gate first.`;
+
+      // Inject clarifications context for "further" stage if provided
+      if (stage === "further" && clarifications && clarifications.length > 0) {
+        orchInput = "The user has provided answers to follow-up questions from the " +
+          "previous pass:\n" +
+          clarifications.map(c => `Q: ${c.question}\nA: ${c.answer}`).join("\n") +
+          "\n\nUse these answers to produce a more targeted and specific enhancement." +
+          "\n\n" + orchInput;
+      }
+
+      const tOrch = performance.now();
+      const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+
+      const orchRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: MODEL_ORCH,
+          max_tokens: TOKENS_ORCH,
+          system: orchSystemPrompt,
+          messages: [{ role: "user", content: orchInput }],
+        }),
+      });
+
+      if (!orchRes.ok) {
+        const errText = await orchRes.text();
+        throw new Error(`Anthropic API ${orchRes.status}: ${errText}`);
+      }
+
+      const orchData = await orchRes.json();
+      const orchRaw: string = orchData.content?.[0]?.text ?? "";
+      const orchInputTokens: number = orchData.usage?.input_tokens ?? 0;
+      const orchOutputTokens: number = orchData.usage?.output_tokens ?? 0;
+
+      const orchCleaned = orchRaw.replace(/```json|```/g, "").trim();
+      let enhancementResult: Record<string, unknown>;
+      try {
+        enhancementResult = JSON.parse(orchCleaned);
+      } catch {
+        return new Response(
+          JSON.stringify({ error: "Orchestrator produced invalid JSON" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      tokenUsage.push({ type: "orchestrator", inputTokens: orchInputTokens, outputTokens: orchOutputTokens });
+      log("orchestrator", {
+        status: "ok",
+        input_tokens: orchInputTokens,
+        output_tokens: orchOutputTokens,
+        duration_ms: Math.round(performance.now() - tOrch),
+      });
+
+      const totalTokens = tokenUsage.reduce(
+        (s, t) => s + t.inputTokens + t.outputTokens, 0
+      );
+      log("request_out", {
+        status: "ok",
+        total_tokens: totalTokens,
+        total_duration_ms: Math.round(performance.now() - tRequest),
+      });
+
+      return new Response(
+        JSON.stringify({ enhancementResult, tokenUsage }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-auth-mode": "jwt" } },
+      );
+    }
+
+    // ─── Legacy path (no stage field — existing behavior, unchanged) ──────────
 
     // Step 1 — Compress input if long
     let enhanceInput = input;

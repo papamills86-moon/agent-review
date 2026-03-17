@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "../lib/supabase";
+import { getAuthHeaders } from "../lib/auth";
 
 // ─── Models (labels only — execution happens server-side) ────────────────────
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
@@ -86,16 +87,6 @@ function tokenEstimate(text: string) {
   return Math.ceil(text.length / 4);
 }
 
-async function getAuthHeaders(): Promise<Record<string, string>> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error("SESSION_EXPIRED");
-  return {
-    "Content-Type": "application/json",
-    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-    "x-agent-secret": import.meta.env.VITE_EDGE_FUNCTION_SECRET,
-    Authorization: `Bearer ${session.access_token}`,
-  };
-}
 
 async function callEdgeFunction(input: string, agents: string[]) {
   const res = await fetch(
