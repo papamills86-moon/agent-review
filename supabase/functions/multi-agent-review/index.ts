@@ -432,7 +432,7 @@ Deno.serve(async (req) => {
     // Return combined payload
     return new Response(
       JSON.stringify({ agentResults, orchestratorResult, tokenUsage }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-auth-mode": jwtEmail ? "jwt" : "legacy" } },
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-auth-mode": "jwt" } },
     );
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

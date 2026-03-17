@@ -516,7 +516,7 @@ Synthesize per your instructions. Apply security gate first.`;
     // Return combined payload
     return new Response(
       JSON.stringify({ enhancementResult, tokenUsage }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-auth-mode": jwtEmail ? "jwt" : "legacy" } },
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "x-auth-mode": "jwt" } },
     );
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

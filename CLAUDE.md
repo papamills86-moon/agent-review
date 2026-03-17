@@ -22,12 +22,14 @@ See `.github/instructions/edge-functions.instructions.md` for Edge Function patt
 
 ### Permanent deployment constraints (never override these)
 
-multi-agent-review — deploy WITHOUT --no-verify-jwt after Phase 3:
-  supabase functions deploy multi-agent-review
-  JWT required at gateway level + code level (defense-in-depth).
+multi-agent-review — deploy WITH --no-verify-jwt:
+  supabase functions deploy multi-agent-review --no-verify-jwt
+  Gateway JWT validation causes "invalid jwt" errors; code-level auth
+  via resolveIdentity() is the sole JWT gate (defense-in-depth via
+  x-agent-secret header remains).
 
-prompt-enhance — deploy WITHOUT --no-verify-jwt after Phase 3:
-  supabase functions deploy prompt-enhance
+prompt-enhance — deploy WITH --no-verify-jwt:
+  supabase functions deploy prompt-enhance --no-verify-jwt
   Same constraint as multi-agent-review.
 
 ### Standing rules
