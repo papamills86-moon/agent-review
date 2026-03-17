@@ -247,15 +247,19 @@ Deno.serve(async (req) => {
     // h. Compute confidence scores
     const maxRawScore = top.length > 0 ? top[0].score : 1;
 
-    const selectedAgents = top.map(({ agent, score }) => ({
-      id: agent.id,
-      name: agent.name,
-      expertise_tags: agent.tags,
-      confidence_score: parseFloat((score / maxRawScore).toFixed(2)),
-      selection_reason: buildSelectionReason(score, category, complexityScore),
-    }));
+    const MIN_CONFIDENCE = 0.67;
 
-    const insufficientPool = pool.length < 6;
+    const selectedAgents = top
+      .map(({ agent, score }) => ({
+        id: agent.id,
+        name: agent.name,
+        expertise_tags: agent.tags,
+        confidence_score: parseFloat((score / maxRawScore).toFixed(2)),
+        selection_reason: buildSelectionReason(score, category, complexityScore),
+      }))
+      .filter((a) => a.confidence_score >= MIN_CONFIDENCE);
+
+    const insufficientPool = pool.length < 6 || selectedAgents.length < 3;
 
     log("selection_complete", {
       email: resolvedEmail,
