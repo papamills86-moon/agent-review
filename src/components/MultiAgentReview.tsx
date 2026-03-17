@@ -749,6 +749,7 @@ export default function MultiAgentReview() {
 
   const groups = ["governance", "product", "engineering"];
   const isRunning = phase === "reviewing";
+  const counselActive = counselState.phase !== 'idle' && counselState.phase !== 'selecting';
 
   return (
     <div style={{
@@ -1195,8 +1196,8 @@ export default function MultiAgentReview() {
           </div>
         )}
 
-        {/* Status bar */}
-        {isRunning && (
+        {/* Status bar (legacy — hidden when counsel drives the flow) */}
+        {isRunning && !counselActive && (
           <div style={{ display:"flex", alignItems:"center", gap:"8px",
             marginBottom:"16px", padding:"8px 14px",
             background:"#0c1221", border:"1px solid #1e293b", borderRadius:"5px" }}>
@@ -1208,8 +1209,8 @@ export default function MultiAgentReview() {
           </div>
         )}
 
-        {/* Error display */}
-        {phase === "error" && (
+        {/* Error display (legacy — hidden when counsel drives the flow) */}
+        {phase === "error" && !counselActive && (
           <div style={{ marginBottom:"16px", padding:"12px 16px",
             background:"rgba(248,113,113,0.08)", border:"1px solid rgba(248,113,113,0.3)",
             borderRadius:"5px", fontSize:"12px", color:"#f87171" }}>
@@ -1283,8 +1284,8 @@ export default function MultiAgentReview() {
           </div>
         )}
 
-        {/* Agent Cards */}
-        {(phase === "reviewing" || phase === "done") && (
+        {/* Agent Cards (legacy — hidden when counsel drives the flow) */}
+        {(phase === "reviewing" || phase === "done") && !counselActive && (
           <div style={{ display:"flex", flexDirection:"column", gap:"8px", marginBottom:"16px" }}>
             <div style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.12em",
               color:"#1e293b", textTransform:"uppercase", marginBottom:"2px" }}>
@@ -1301,8 +1302,8 @@ export default function MultiAgentReview() {
           </div>
         )}
 
-        {/* Orchestrator */}
-        {(phase === "reviewing" || phase === "done") && (
+        {/* Orchestrator (legacy — hidden when counsel drives the flow) */}
+        {(phase === "reviewing" || phase === "done") && !counselActive && (
           <div style={{ marginBottom:"16px" }}>
             <div style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.12em",
               color:"#1e293b", textTransform:"uppercase", marginBottom:"8px" }}>
@@ -1312,8 +1313,8 @@ export default function MultiAgentReview() {
           </div>
         )}
 
-        {/* Token summary */}
-        {tokenLog.length > 0 && <TokenSummary tokenLog={tokenLog} enhancementTokenLog={enhancementTokenUsage} />}
+        {/* Token summary (legacy — hidden when counsel drives the flow) */}
+        {tokenLog.length > 0 && !counselActive && <TokenSummary tokenLog={tokenLog} enhancementTokenLog={enhancementTokenUsage} />}
 
       </div>
     </div>
