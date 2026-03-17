@@ -1309,40 +1309,85 @@ export default function MultiAgentReview() {
               </span>
             </div>
             {counselSelectedOpen && (
-              <div style={{ marginTop:"12px", display:"flex", flexWrap:"wrap", gap:"8px" }}>
+              <div style={{ marginTop:"12px", display:"flex", flexDirection:"column", gap:"8px" }}>
                 {counselState.selectedMembers
                   .filter(m => m.status !== 'manually-removed')
-                  .map(m => (
-                    <div key={m.id} style={{
-                      background:"#1e293b", borderRadius:"6px", padding:"8px 12px",
-                      border:"1px solid #1e2d3d", display:"flex", flexDirection:"column", gap:"4px",
-                      minWidth:"140px"
-                    }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
-                        <span style={{ fontWeight:600, fontSize:"12px", color:"#e2e8f0" }}>{m.name}</span>
-                        <span style={{
-                          fontSize:"10px", padding:"1px 5px", borderRadius:"3px",
-                          background: m.status === 'auto-selected' ? '#1e3a5f' : '#14532d',
-                          color: m.status === 'auto-selected' ? '#3b82f6' : '#22c55e'
-                        }}>
-                          {m.status === 'auto-selected' ? 'Auto' : 'Added'}
-                        </span>
+                  .sort((a, b) =>
+                    (CONCERN_ORDER[agentResults[a.id]?.concern_level] ?? 99) -
+                    (CONCERN_ORDER[agentResults[b.id]?.concern_level] ?? 99))
+                  .map(m => {
+                    const result = agentResults[m.id];
+                    const agent = ALL_AGENTS.find(a => a.id === m.id);
+                    const isLoading = agentLoading[m.id] ?? false;
+                    const concernLevel = result?.concern_level as string | undefined;
+                    const concernColor = CONCERN_COLOR[concernLevel ?? ""] ?? "#6b7280";
+                    return (
+                      <div key={m.id} style={{
+                        background: agent?.bgColor ?? "rgba(255,255,255,0.02)",
+                        borderRadius:"6px", padding:"14px 18px",
+                        border:`1px solid ${agent ? agent.accentColor + "25" : "#1e2d3d"}`,
+                        borderLeft:`3px solid ${isLoading ? "#1e293b" : (agent?.accentColor ?? "#64748b")}`,
+                      }}>
+                        {/* Header */}
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                            {agent && (
+                              <span style={{
+                                fontFamily:"monospace", fontSize:"9px", fontWeight:700,
+                                color: agent.accentColor, background:`${agent.accentColor}18`,
+                                padding:"2px 6px", borderRadius:"2px", letterSpacing:"0.1em"
+                              }}>{agent.abbr}</span>
+                            )}
+                            <span style={{ fontWeight:600, fontSize:"13px", color:"#e2e8f0" }}>{m.name}</span>
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                            {agentTokens[m.id] && <TokenPill input={agentTokens[m.id].inputTokens} output={agentTokens[m.id].outputTokens} />}
+                            {isLoading && <span style={{ color:"#374151", fontSize:"11px", fontStyle:"italic" }}>analyzing…</span>}
+                            {result && !isLoading && concernLevel && (
+                              <Badge text={concernLevel} color={concernColor} />
+                            )}
+                          </div>
+                        </div>
+                        {/* Loading indicator */}
+                        {isLoading && (
+                          <div style={{ display:"flex", gap:"4px", marginTop:"10px" }}>
+                            {[0,1,2].map(i => (
+                              <div key={i} style={{ width:"5px", height:"5px", borderRadius:"50%",
+                                background: agent?.accentColor ?? "#94a3b8", opacity:0.5,
+                                animation:"pulse 1.1s ease-in-out infinite", animationDelay:`${i*0.18}s` }} />
+                            ))}
+                          </div>
+                        )}
+                        {/* Results */}
+                        {result && !isLoading && (
+                          <div style={{ marginTop:"12px", display:"flex", flexDirection:"column", gap:"10px" }}>
+                            {result.error
+                              ? <p style={{ color:"#f87171", fontSize:"12px", margin:0 }}>Parse error: {result.error as string}</p>
+                              : <>
+                                <p style={{ color:"#94a3b8", fontSize:"12px", margin:0, lineHeight:1.65 }}>{result.summary as string}</p>
+                                {(result.findings as string[])?.length > 0 && (
+                                  <ul style={{ margin:0, padding:0, listStyle:"none", display:"flex", flexDirection:"column", gap:"4px" }}>
+                                    {(result.findings as string[]).map((f: string, i: number) => (
+                                      <li key={i} style={{ fontSize:"12px", color:"#cbd5e1", paddingLeft:"12px", position:"relative", lineHeight:1.5 }}>
+                                        <span style={{ position:"absolute", left:0, color: agent?.accentColor ?? "#94a3b8" }}>›</span>{f}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                                {result.recommendation && (
+                                  <div style={{ borderTop:`1px solid ${agent ? agent.accentColor + "18" : "#1e293b"}`, paddingTop:"9px",
+                                    fontSize:"12px", color:"#e2e8f0", lineHeight:1.6, fontStyle:"italic" }}>
+                                    <span style={{ color: agent?.accentColor ?? "#94a3b8", fontStyle:"normal", fontWeight:700, marginRight:"6px" }}>→</span>
+                                    {result.recommendation as string}
+                                  </div>
+                                )}
+                              </>
+                            }
+                          </div>
+                        )}
                       </div>
-                      <div style={{ display:"flex", gap:"3px", flexWrap:"wrap" }}>
-                        {m.expertiseTags.slice(0, 3).map(tag => (
-                          <span key={tag} style={{
-                            fontSize:"9px", color:"#64748b", background:"#0f172a",
-                            padding:"1px 4px", borderRadius:"3px"
-                          }}>{tag}</span>
-                        ))}
-                      </div>
-                      {m.confidenceScore < 1 && (
-                        <span style={{ fontSize:"10px", color:"#94a3b8" }}>
-                          {Math.round(m.confidenceScore * 100)}% confidence
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
               </div>
             )}
           </div>
