@@ -59,39 +59,40 @@ const TOKENS_ORCH = 1500;
 const INPUT_COMPRESS_THRESHOLD = 600; // chars
 
 // ─── Agent System Prompts ────────────────────────────────────────────────────
-const JSON_SCHEMA = `JSON only, no markdown:
-{"concern_level":"critical|high|medium|low|none","summary":"one sentence","findings":["finding"],"recommendation":"one sentence","questions":["question if needed"]}`;
+const SHARED_SCHEMA_PREFIX = `Respond with JSON only, no markdown. Max 3 items per array field:
+{"concern_level":"critical|high|medium|low|none","summary":"one sentence","findings":["finding1","finding2","finding3"],"recommendation":"one sentence","questions":["question1","question2"]}
+`;
 
 const AGENT_PROMPTS: Record<string, string> = {
   security: `Security Architect. Lens: auth, authz, injection, data exposure, OWASP, secrets, supply chain.
-Ignore business concerns. ${JSON_SCHEMA}`,
+Ignore business concerns.`,
 
   compliance: `Compliance Officer. Lens: GDPR, SOC2, HIPAA, audit trail, data retention, access policy, change management.
-Ignore implementation. ${JSON_SCHEMA}`,
+Ignore implementation.`,
 
   product: `Senior Product Manager. Lens: user impact, scope creep, priority, stakeholder alignment, rollout risk.
-Leave implementation to engineers. ${JSON_SCHEMA}`,
+Leave implementation to engineers.`,
 
   qa: `QA Lead. Lens: test coverage gaps, regression risk, edge cases, acceptance criteria, release readiness.
-Flag anything that makes this risky to ship. ${JSON_SCHEMA}`,
+Flag anything that makes this risky to ship.`,
 
   backend: `Staff Backend Engineer. Lens: implementation complexity, tech debt, scalability, dependency risk, regression potential.
-Be blunt about hidden complexity. ${JSON_SCHEMA}`,
+Be blunt about hidden complexity.`,
 
   frontend: `Staff Frontend Engineer. Lens: rendering performance, bundle size, component contracts, CSS regressions, accessibility (WCAG), state management impact, mobile UX.
-Focus on what breaks or degrades for the user's browser experience. ${JSON_SCHEMA}`,
+Focus on what breaks or degrades for the user's browser experience.`,
 
   db: `Database Architect. Lens: schema backward compatibility, migration risk, index strategy, query plan impact, RLS policy, N+1 patterns, connection pool pressure.
-Flag anything that could corrupt data or cause irreversible schema state. ${JSON_SCHEMA}`,
+Flag anything that could corrupt data or cause irreversible schema state.`,
 
   devops: `Staff DevOps Engineer. Lens: CI/CD pipeline impact, deployment risk, rollback feasibility, env config drift, secret surface area, container changes, infra-as-code correctness, observability gaps.
-Focus on what could cause a bad deploy or make a bad deploy hard to recover from. ${JSON_SCHEMA}`,
+Focus on what could cause a bad deploy or make a bad deploy hard to recover from.`,
 
   api: `API Design Lead. Lens: breaking changes to contracts, REST/GraphQL semantics, versioning strategy, consumer impact, error shape consistency, auth header patterns, pagination design, rate limiting.
-Flag any change that could silently break existing API consumers. ${JSON_SCHEMA}`,
+Flag any change that could silently break existing API consumers.`,
 
   googleplay: `Google Play Policy Reviewer. Lens: Google Play Developer Program Policies, content ratings, data safety section accuracy, permissions justification, target API level requirements, restricted permissions, Families Policy compliance, billing policy, store listing accuracy, user data transparency.
-Flag anything that could trigger a policy rejection, app suspension, or required disclosure change. ${JSON_SCHEMA}`,
+Flag anything that could trigger a policy rejection, app suspension, or required disclosure change.`,
 };
 
 const AGENT_NAMES: Record<string, string> = {
@@ -359,7 +360,7 @@ Deno.serve(async (req) => {
     const agentPromises = validAgentIds.map(async (id) => {
       const tAgent = performance.now();
       const { parsed, inputTokens, outputTokens } = await callClaude(
-        AGENT_PROMPTS[id],
+        SHARED_SCHEMA_PREFIX + AGENT_PROMPTS[id],
         `Review this:\n\n${reviewInput}`,
         MODEL_AGENT,
         TOKENS_AGENT,
@@ -383,23 +384,29 @@ Deno.serve(async (req) => {
     }
 
     // Step 3 — Orchestrator synthesis
+    const HIGH_CONCERN = new Set(["critical", "high", "medium"]);
     const orchInput = [
-      `Original request:\n${reviewInput}`,
+      `Request summary (excerpt): ${reviewInput.slice(0, 220).replace(/\s\S*$/, '')}${reviewInput.length > 220 ? "…" : ""}`,
       "---",
       ...allResults.map(({ name, result }) => {
-        const findings = (result.findings as string[]) ?? [];
-        const questions = (result.questions as string[]) ?? [];
+        const level = (result.concern_level as string) ?? "?";
         const lines = [
-          `## ${name} [${result.concern_level ?? "?"}]`,
+          `## ${name} [${level}]`,
           `Summary: ${result.summary ?? ""}`,
         ];
-        if (findings.length > 0) {
-          lines.push(`Findings:\n${findings.map((f, i) => `  ${i + 1}. ${f}`).join("\n")}`);
+        if (HIGH_CONCERN.has(level)) {
+          // Full block for critical/high/medium agents
+          const findings = (result.findings as string[]) ?? [];
+          if (findings.length > 0) {
+            lines.push(`Findings:\n${findings.map((f, i) => `  ${i + 1}. ${f}`).join("\n")}`);
+          }
+          lines.push(`Recommendation: ${result.recommendation ?? ""}`);
+          const questions = (result.questions as string[]) ?? [];
+          if (questions.length > 0) {
+            lines.push(`Questions:\n${questions.map((q) => `  - ${q}`).join("\n")}`);
+          }
         }
-        lines.push(`Recommendation: ${result.recommendation ?? ""}`);
-        if (questions.length > 0) {
-          lines.push(`Questions:\n${questions.map((q) => `  - ${q}`).join("\n")}`);
-        }
+        // low/none/unknown: name + level + summary only — no findings or recommendation
         return lines.join("\n");
       }),
     ].join("\n\n");
