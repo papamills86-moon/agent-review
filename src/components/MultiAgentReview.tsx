@@ -1,6 +1,10 @@
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "../lib/supabase";
 import { getAuthHeaders } from "../lib/auth";
+import { useCounsel } from "../hooks/useCounsel";
+// Types used by counsel integration (CounselMember/AuditEntry consumed via useCounsel hook)
+import ReviewerSelectionPanel from "./ReviewerSelectionPanel";
+import CounselResultsPanel from "./CounselResultsPanel";
 
 // ─── Models (labels only — execution happens server-side) ────────────────────
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
@@ -15,60 +19,70 @@ const ALL_AGENTS = [
     id: "security", name: "Security Architect", abbr: "SEC", group: "governance",
     accentColor: "#f87171", bgColor: "rgba(248,113,113,0.07)",
     defaultOn: true,
+    expertiseTags: ["security","auth","vulnerabilities","encryption","OWASP"],
     systemPrompt: ""
   },
   {
     id: "compliance", name: "Compliance Officer", abbr: "CMP", group: "governance",
     accentColor: "#34d399", bgColor: "rgba(52,211,153,0.07)",
     defaultOn: true,
+    expertiseTags: ["compliance","regulatory","GDPR","SOC2","audit"],
     systemPrompt: ""
   },
   {
     id: "product", name: "Product Manager", abbr: "PM", group: "product",
     accentColor: "#38bdf8", bgColor: "rgba(56,189,248,0.07)",
     defaultOn: true,
+    expertiseTags: ["product","requirements","user-stories","prioritization"],
     systemPrompt: ""
   },
   {
     id: "qa", name: "QA Lead", abbr: "QA", group: "product",
     accentColor: "#fbbf24", bgColor: "rgba(251,191,36,0.07)",
     defaultOn: true,
+    expertiseTags: ["testing","quality","edge-cases","regression","coverage"],
     systemPrompt: ""
   },
   {
     id: "backend", name: "Backend Engineer", abbr: "ENG", group: "engineering",
     accentColor: "#a78bfa", bgColor: "rgba(167,139,250,0.07)",
     defaultOn: true,
+    expertiseTags: ["backend","architecture","performance","scalability"],
     systemPrompt: ""
   },
   {
     id: "frontend", name: "Frontend Engineer", abbr: "FE", group: "engineering",
     accentColor: "#fb923c", bgColor: "rgba(251,146,60,0.07)",
     defaultOn: false,
+    expertiseTags: ["frontend","React","UI/UX","accessibility","TypeScript"],
     systemPrompt: ""
   },
   {
     id: "db", name: "Database Architect", abbr: "DB", group: "engineering",
     accentColor: "#e879f9", bgColor: "rgba(232,121,249,0.07)",
     defaultOn: false,
+    expertiseTags: ["database","schema","queries","optimization","migrations"],
     systemPrompt: ""
   },
   {
     id: "devops", name: "DevOps Engineer", abbr: "OPS", group: "engineering",
     accentColor: "#4ade80", bgColor: "rgba(74,222,128,0.07)",
     defaultOn: false,
+    expertiseTags: ["devops","CI/CD","deployment","infrastructure","monitoring"],
     systemPrompt: ""
   },
   {
     id: "api", name: "API Designer", abbr: "API", group: "engineering",
     accentColor: "#67e8f9", bgColor: "rgba(103,232,249,0.07)",
     defaultOn: false,
+    expertiseTags: ["REST","GraphQL","contracts","versioning","integration"],
     systemPrompt: ""
   },
   {
     id: "googleplay", name: "Google Play Policy", abbr: "GP", group: "engineering",
     accentColor: "#34a853", bgColor: "rgba(52,168,83,0.07)",
     defaultOn: false,
+    expertiseTags: ["google-play","app-store","policy","mobile","compliance"],
     systemPrompt: ""
   },
 ];
@@ -528,6 +542,10 @@ export default function MultiAgentReview() {
     useState<TokenUsageEntry[] | null>(null);
   const [reviewedPromptOpen, setReviewedPromptOpen] = useState(false);
 
+  // ─── Counsel Auto-Select ──────────────────────────────────────────────────
+  const counselHook = useCounsel();
+  const { state: counselState } = counselHook;
+
   const activeAgents = ALL_AGENTS.filter(a => enabledAgents[a.id]);
   const needsCompression = input.length > INPUT_COMPRESS_THRESHOLD;
   const inputTokenEst = tokenEstimate(input);
@@ -542,7 +560,7 @@ export default function MultiAgentReview() {
     setEnabledAgents(next);
   };
 
-  const runReview = useCallback(async () => {
+  const runReview = useCallback(async (overrideAgentIds?: string[]) => {
     if (!input.trim() || !activeAgents.length) return;
 
     // Reset state
@@ -558,7 +576,7 @@ export default function MultiAgentReview() {
 
     try {
       // Single Edge Function call — it handles compression, fan-out, and orchestration
-      const agentIds = activeAgents.map(a => a.id);
+      const agentIds = overrideAgentIds ?? activeAgents.map(a => a.id);
       const payload = await callEdgeFunction(input, agentIds);
 
       // Populate agent results all at once
@@ -668,7 +686,7 @@ export default function MultiAgentReview() {
     );
     setInput(finalPrompt);
     setEnhancementPhase("counsel-review");
-    // runReview will be triggered by the useEffect below after state flush.
+    counselHook.callAutoSelect(finalPrompt);
   }
 
   function resetEnhancement() {
@@ -683,20 +701,17 @@ export default function MultiAgentReview() {
     reset();
   }
 
-  // Trigger runReview after state flush
+  // Trigger runReview after state flush (only when counsel auto-select is not active)
   useEffect(() => {
-    // Only fire when:
-    // 1. Enhancement flow has prepared the final prompt
-    // 2. Input state is flushed and ready
-    // 3. Existing counsel pipeline is idle (not already running)
     if (
       enhancementPhase === "counsel-review" &&
       input.trim() &&
-      phase === "idle"
+      phase === "idle" &&
+      counselState.phase === "idle"
     ) {
       runReview();
     }
-  }, [enhancementPhase, input, phase, runReview]);
+  }, [enhancementPhase, input, phase, counselState.phase, runReview]);
 
   // Finalize enhancement flow
   useEffect(() => {
@@ -705,6 +720,26 @@ export default function MultiAgentReview() {
       setEnhancementPhase("done");
     }
   }, [enhancementPhase, phase]);
+
+  // Bridge: counselState.phase === 'reviewing' → trigger runReview with override IDs
+  useEffect(() => {
+    if (counselState.phase === 'reviewing' && phase === 'idle') {
+      const ids = counselState.selectedMembers
+        .filter(m => m.status !== 'manually-removed')
+        .map(m => m.id);
+      runReview(ids);
+    }
+  }, [counselState.phase, phase]);
+
+  // Bridge: sync review completion back to counselState
+  useEffect(() => {
+    if (phase === 'done' && counselState.phase === 'reviewing') {
+      counselHook.completeReview();
+    }
+    if (phase === 'error' && counselState.phase === 'reviewing') {
+      counselHook.resetToIdle();
+    }
+  }, [phase]);
 
   const sortedActiveAgents = phase === "done"
     ? [...activeAgents].sort((a,b) =>
@@ -827,7 +862,7 @@ export default function MultiAgentReview() {
                 }}>
                   ✦ Enhance Prompt
                 </button>
-                <button onClick={runReview} disabled={!input.trim() || !activeAgents.length} style={{
+                <button onClick={() => { if (counselState.phase === 'idle') counselHook.callAutoSelect(input); }} disabled={!input.trim() || !activeAgents.length} style={{
                   padding:"9px 22px", background: (input.trim() && activeAgents.length) ? "#0f2744" : "#0c1221",
                   border:`1px solid ${(input.trim() && activeAgents.length) ? "#1d4ed850" : "#1e293b"}`,
                   borderRadius:"5px", color:(input.trim() && activeAgents.length) ? "#60a5fa" : "#374151",
@@ -1106,6 +1141,57 @@ export default function MultiAgentReview() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Counsel Selection Panel */}
+        {counselState.phase === 'selection_review' && (
+          <ReviewerSelectionPanel
+            members={counselState.selectedMembers}
+            allAvailableAgents={
+              ALL_AGENTS
+                .filter(a => enabledAgents[a.id])
+                .map(a => ({
+                  id: a.id,
+                  name: a.name,
+                  expertiseTags: a.expertiseTags,
+                  isDefaultOn: a.defaultOn,
+                }))
+            }
+            seventhSlotStatus={counselState.seventhSlotStatus}
+            insufficientPool={counselState.insufficientPool}
+            fallbackMode={counselState.fallbackMode}
+            algorithmVersion={counselState.algorithmVersion}
+            selectionTimestamp={counselState.selectionTimestamp ?? ''}
+            onAddReviewer={counselHook.addReviewer}
+            onRemoveReviewer={counselHook.removeReviewer}
+            onReAddReviewer={counselHook.reAddReviewer}
+            onConfirm={counselHook.confirmAndRun}
+            onCancel={counselHook.hardReset}
+          />
+        )}
+
+        {/* Counsel Results Panel */}
+        {(counselState.phase === 'reviewing' || counselState.phase === 'complete') && (
+          <CounselResultsPanel
+            members={counselState.selectedMembers.filter(m => m.status !== 'manually-removed')}
+            reviewResult={orchResult ?? null}
+            reviewStartTimestamp={counselState.reviewStartTimestamp ?? new Date().toISOString()}
+            auditLog={counselState.auditLog}
+            phase={counselState.phase === 'reviewing' ? 'reviewing' : 'complete'}
+            tokenUsage={tokenLog.length > 0 ? tokenLog : null}
+            onRunAgain={counselHook.restartReview}
+          />
+        )}
+
+        {/* Selecting spinner overlay */}
+        {counselState.phase === 'selecting' && (
+          <div style={{
+            background: 'rgba(8,13,24,0.75)', borderRadius: 12,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '28px', marginBottom: '16px'
+          }}>
+            <span style={{ color: '#3b82f6', fontSize: 14 }}>Selecting counsel...</span>
           </div>
         )}
 
