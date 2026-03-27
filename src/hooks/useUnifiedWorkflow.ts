@@ -1,4 +1,5 @@
 import { useReducer, useCallback, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
 import { getAuthHeaders } from '../lib/auth';
 import { BUILTIN_AGENTS } from '../data/agentRegistry';
 import type {
@@ -74,6 +75,37 @@ function auditEntry(
     performedBy,
     algorithmVersion,
   };
+}
+
+// ─── Authenticated fetch with 401 retry ─────────────────────────────────────
+
+async function authFetch(url: string, body: Record<string, unknown>): Promise<Response> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (res.status === 401) {
+    // Token may have expired — try refreshing the session once
+    const { error } = await supabase.auth.refreshSession();
+    if (error) {
+      await supabase.auth.signOut();
+      throw new Error('SESSION_EXPIRED');
+    }
+    const retryHeaders = await getAuthHeaders();
+    const retry = await fetch(url, {
+      method: 'POST',
+      headers: retryHeaders,
+      body: JSON.stringify(body),
+    });
+    if (!retry.ok) throw new Error(`Request failed: ${retry.status}`);
+    return retry;
+  }
+
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  return res;
 }
 
 // ─── Initial state ──────────────────────────────────────────────────────────
@@ -322,20 +354,10 @@ export function useUnifiedWorkflow(customAgents: CustomAgent[] = []) {
   const enhance = useCallback(async (input: string): Promise<void> => {
     dispatch({ type: 'START_ENHANCE', payload: { input } });
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(
+      const res = await authFetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/prompt-enhance`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            input,
-            stage: 'initial',
-            source_app: 'unified-workflow',
-          }),
-        },
+        { input, stage: 'initial', source_app: 'unified-workflow' },
       );
-      if (!res.ok) throw new Error(`Enhancement failed: ${res.status}`);
       const data = await res.json();
       dispatch({
         type: 'ENHANCE_COMPLETE',
@@ -355,21 +377,10 @@ export function useUnifiedWorkflow(customAgents: CustomAgent[] = []) {
   const submitClarifications = useCallback(async (clarifications: Clarification[]): Promise<void> => {
     dispatch({ type: 'SET_CLARIFICATIONS', payload: { clarifications } });
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(
+      const res = await authFetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/prompt-enhance`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            input: state.originalInput,
-            stage: 'further',
-            clarifications,
-            source_app: 'unified-workflow',
-          }),
-        },
+        { input: state.originalInput, stage: 'further', clarifications, source_app: 'unified-workflow' },
       );
-      if (!res.ok) throw new Error(`Further enhancement failed: ${res.status}`);
       const data = await res.json();
       dispatch({
         type: 'FURTHER_ENHANCE_COMPLETE',
@@ -398,23 +409,17 @@ export function useUnifiedWorkflow(customAgents: CustomAgent[] = []) {
       .map(a => ({ id: a.id, name: a.name, tags: a.expertiseTags }));
 
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(
+      const res = await authFetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/counsel-auto-select`,
         {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            case_context: promptText,
-            input_category: inputCategory,
-            complexity_score: complexityScore,
-            excluded_agents: [],
-            custom_agents: customPayload.length > 0 ? customPayload : undefined,
-            source_app: 'unified-workflow',
-          }),
+          case_context: promptText,
+          input_category: inputCategory,
+          complexity_score: complexityScore,
+          excluded_agents: [],
+          custom_agents: customPayload.length > 0 ? customPayload : undefined,
+          source_app: 'unified-workflow',
         },
       );
-      if (!res.ok) throw new Error(`Auto-select failed: ${res.status}`);
 
       const data: AutoSelectResponse = await res.json();
 
@@ -485,22 +490,16 @@ export function useUnifiedWorkflow(customAgents: CustomAgent[] = []) {
       .map(a => ({ id: a.id, name: a.name, system_prompt: a.systemPrompt }));
 
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(
+      const res = await authFetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/multi-agent-review`,
         {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            input: promptText,
-            agents: agentIds,
-            custom_agents: customPayload.length > 0 ? customPayload : undefined,
-            coverage_insufficient: state.insufficientCoverage,
-            source_app: 'unified-workflow',
-          }),
+          input: promptText,
+          agents: agentIds,
+          custom_agents: customPayload.length > 0 ? customPayload : undefined,
+          coverage_insufficient: state.insufficientCoverage,
+          source_app: 'unified-workflow',
         },
       );
-      if (!res.ok) throw new Error(`Review failed: ${res.status}`);
 
       const data = await res.json();
       const orchResult = data.orchestratorResult as Record<string, unknown>;
@@ -536,26 +535,20 @@ export function useUnifiedWorkflow(customAgents: CustomAgent[] = []) {
   const generateAgent = useCallback(async (profession: RecommendedProfession): Promise<void> => {
     dispatch({ type: 'START_GENERATION', payload: { profession: profession.title } });
     try {
-      const headers = await getAuthHeaders();
       const existingIds = [
         ...BUILTIN_AGENTS.map(a => a.id),
         ...customAgents.map(a => a.id),
       ];
-      const res = await fetch(
+      const res = await authFetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-agent`,
         {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            profession_title: profession.title,
-            rationale: profession.rationale,
-            suggested_tags: profession.suggestedExpertiseTags,
-            existing_agent_ids: existingIds,
-            source_app: 'unified-workflow',
-          }),
+          profession_title: profession.title,
+          rationale: profession.rationale,
+          suggested_tags: profession.suggestedExpertiseTags,
+          existing_agent_ids: existingIds,
+          source_app: 'unified-workflow',
         },
       );
-      if (!res.ok) throw new Error(`Agent generation failed: ${res.status}`);
 
       const data = await res.json();
       const agentDef = data.agent_def as CustomAgent;
