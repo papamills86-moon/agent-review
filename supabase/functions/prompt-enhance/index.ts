@@ -56,7 +56,7 @@ const MODEL_ORCH = "claude-sonnet-4-20250514";
 const TOKENS_AGENT = 450;
 const TOKENS_COMPRESS_BASE = 300;
 const TOKENS_COMPRESS_LARGE = 800;  // for inputs > 10K chars
-const TOKENS_ORCH_BASE = 800;
+const TOKENS_ORCH_BASE = 1200;       // must fit refined_prompt + metadata
 const TOKENS_ORCH_LARGE = 2000;     // for large-input refinements
 const INPUT_COMPRESS_THRESHOLD = 2000; // chars — don't compress short inputs
 const LARGE_INPUT_THRESHOLD = 10000;   // chars — triggers higher token budgets
@@ -634,7 +634,7 @@ Synthesize per your instructions. Apply security gate first.`;
       },
       body: JSON.stringify({
         model: MODEL_ORCH,
-        max_tokens: TOKENS_ORCH,
+        max_tokens: input.length > LARGE_INPUT_THRESHOLD ? TOKENS_ORCH_LARGE : TOKENS_ORCH_BASE,
         system: ORCH_SYSTEM,
         messages: [{ role: "user", content: orchInput }],
       }),
