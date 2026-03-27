@@ -292,10 +292,14 @@ Deno.serve(async (req) => {
       input,
       agents,
       source_app: sourceApp = "unknown",
+      custom_agents: customAgents = [],
+      coverage_insufficient = false,
     } = (await req.json()) as {
       input: string;
       agents: string[];
       source_app?: string;
+      custom_agents?: Array<{ id: string; name: string; system_prompt: string }>;
+      coverage_insufficient?: boolean;
     };
 
     const log = createLogger(requestId, sourceApp, "multi-agent-review");
@@ -324,8 +328,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Validate requested agents
-    const validAgentIds = agents.filter((id) => AGENT_PROMPTS[id]);
+    // Validate requested agents — accept built-in OR custom agent IDs
+    const customAgentMap = new Map(
+      customAgents.map((a) => [a.id, a]),
+    );
+    const validAgentIds = agents.filter(
+      (id) => AGENT_PROMPTS[id] || customAgentMap.has(id),
+    );
     if (!validAgentIds.length) {
       return new Response(
         JSON.stringify({ error: `No valid agent IDs. Available: ${Object.keys(AGENT_PROMPTS).join(", ")}` }),
@@ -359,8 +368,10 @@ Deno.serve(async (req) => {
     // Step 2 — Parallel agent calls
     const agentPromises = validAgentIds.map(async (id) => {
       const tAgent = performance.now();
+      const systemPrompt = AGENT_PROMPTS[id] ?? customAgentMap.get(id)!.system_prompt;
+      const agentName = AGENT_NAMES[id] ?? customAgentMap.get(id)?.name ?? id;
       const { parsed, inputTokens, outputTokens } = await callClaude(
-        SHARED_SCHEMA_PREFIX + AGENT_PROMPTS[id],
+        SHARED_SCHEMA_PREFIX + systemPrompt,
         `Review this:\n\n${reviewInput}`,
         MODEL_AGENT,
         TOKENS_AGENT,
@@ -373,7 +384,7 @@ Deno.serve(async (req) => {
         output_tokens: outputTokens,
         duration_ms: Math.round(performance.now() - tAgent),
       });
-      return { id, name: AGENT_NAMES[id] ?? id, result: parsed };
+      return { id, name: agentName, result: parsed };
     });
 
     const allResults = await Promise.all(agentPromises);
@@ -411,12 +422,20 @@ Deno.serve(async (req) => {
       }),
     ].join("\n\n");
 
+    // Build orchestrator system prompt — append gap analysis when coverage is insufficient
+    let orchSystem = ORCH_SYSTEM;
+    let orchMaxTokens = TOKENS_ORCH;
+    if (coverage_insufficient) {
+      orchSystem += `\n\nPOOL GAP ANALYSIS: The review board had insufficient expert coverage for this topic (fewer than 4 specialists with >70% relevance). In addition to your verdict, recommend 3-5 new professional roles NOT already in the current pool that would provide better coverage for this specific review. For each, include: title, rationale (why this role is needed for this review), and suggested_expertise_tags (3-5 tags). Return these in a "recommended_professions" array in your JSON response.`;
+      orchMaxTokens = 2000;
+    }
+
     const tOrch = performance.now();
     const { parsed: orchestratorResult, inputTokens: oIn, outputTokens: oOut } = await callClaude(
-      ORCH_SYSTEM,
+      orchSystem,
       orchInput,
       MODEL_ORCH,
-      TOKENS_ORCH,
+      orchMaxTokens,
     );
     tokenUsage.push({ type: "orch", inputTokens: oIn, outputTokens: oOut });
     log("orchestrator", {

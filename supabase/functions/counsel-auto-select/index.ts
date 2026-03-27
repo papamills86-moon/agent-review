@@ -148,6 +148,7 @@ Deno.serve(async (req) => {
       complexity_score?: number;
       excluded_agents?: string[];
       source_app?: string;
+      custom_agents?: Array<{ id: string; name: string; tags: string[] }>;
     };
 
     const {
@@ -156,6 +157,7 @@ Deno.serve(async (req) => {
       complexity_score: rawComplexity,
       excluded_agents = [],
       source_app: sourceApp = "unknown",
+      custom_agents = [],
     } = body;
 
     const log = createLogger(requestId, sourceApp, "counsel-auto-select");
@@ -193,8 +195,18 @@ Deno.serve(async (req) => {
     ));
     const excludedSet = new Set(Array.isArray(excluded_agents) ? excluded_agents : []);
 
-    // ── Build candidate pool (remove excluded) ────────────────────────
-    const pool = AGENT_REGISTRY.filter((a) => !excludedSet.has(a.id));
+    // ── Build candidate pool (remove excluded, merge custom agents) ───
+    const customDefs: AgentDef[] = (Array.isArray(custom_agents) ? custom_agents : [])
+      .filter((c) => c && typeof c.id === "string" && typeof c.name === "string" && Array.isArray(c.tags))
+      .map((c) => ({ id: c.id, name: c.name, defaultOn: false, tags: c.tags }));
+
+    const registryIds = new Set(AGENT_REGISTRY.map((a) => a.id));
+    const mergedRegistry = [
+      ...AGENT_REGISTRY,
+      ...customDefs.filter((c) => !registryIds.has(c.id)),
+    ];
+
+    const pool = mergedRegistry.filter((a) => !excludedSet.has(a.id));
 
     // ── Scoring ───────────────────────────────────────────────────────
     const routeAgentIds = new Set(ROUTE_TAG_MAP[category]);
@@ -224,31 +236,22 @@ Deno.serve(async (req) => {
     // e. Sort descending by score — deterministic tie-breaking by registry order
     scored.sort((a, b) => b.score - a.score);
 
-    // f. Take top 6 (or fewer)
-    const top = scored.slice(0, Math.min(6, scored.length));
+    // f. Take top 5-7: always take top 5, include 6th/7th if confidence >= MIN_CONFIDENCE
+    const MIN_CONFIDENCE = 0.67;
+    const maxRawScore = scored.length > 0 ? scored[0].score : 1;
 
-    // g. 7th slot eligibility
-    const seventhSlotEligible =
-      complexityScore >= 8 || category === "security" || category === "audit";
-
-    let seventhSlotReason: string;
-    if (seventhSlotEligible) {
-      seventhSlotReason =
-        `Case complexity (score ${complexityScore}/10) or category '${category}' requires expanded review panel`;
-    } else {
-      seventhSlotReason =
-        "Complexity score below threshold (need \u22658) and category not security/audit";
+    const top = scored.slice(0, Math.min(5, scored.length));
+    for (let i = 5; i < Math.min(7, scored.length); i++) {
+      const conf = parseFloat((scored[i].score / maxRawScore).toFixed(2));
+      if (conf >= MIN_CONFIDENCE) {
+        top.push(scored[i]);
+      }
     }
 
-    if (seventhSlotEligible && scored.length > 6) {
-      top.push(scored[6]);
-    }
+    // g. Backward-compat seventh-slot fields (logic removed — dynamic selection)
+    const seventhSlotReason = "Removed \u2014 dynamic selection";
 
     // h. Compute confidence scores
-    const maxRawScore = top.length > 0 ? top[0].score : 1;
-
-    const MIN_CONFIDENCE = 0.67;
-
     const selectedAgents = top
       .map(({ agent, score }) => ({
         id: agent.id,
@@ -259,6 +262,9 @@ Deno.serve(async (req) => {
       }))
       .filter((a) => a.confidence_score >= MIN_CONFIDENCE);
 
+    // i. Coverage assessment
+    const highConfidenceCount = selectedAgents.filter((a) => a.confidence_score >= 0.70).length;
+
     const insufficientPool = pool.length < 6 || selectedAgents.length < 3;
 
     log("selection_complete", {
@@ -266,14 +272,19 @@ Deno.serve(async (req) => {
       category,
       complexity_score: complexityScore,
       selected_count: selectedAgents.length,
-      seventh_slot_eligible: seventhSlotEligible,
+      seventh_slot_eligible: false,
       insufficient_pool: insufficientPool,
+      high_confidence_count: highConfidenceCount,
     });
 
     return jsonResponse({
       selected_agents: selectedAgents,
-      seventh_slot_eligible: seventhSlotEligible,
+      seventh_slot_eligible: false,
       seventh_slot_reason: seventhSlotReason,
+      coverage_assessment: {
+        high_confidence_count: highConfidenceCount,
+        threshold_met: highConfidenceCount >= 4,
+      },
       insufficient_pool: insufficientPool,
       algorithm_version: "1.0",
       selection_timestamp: new Date().toISOString(),
