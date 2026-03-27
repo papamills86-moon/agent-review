@@ -54,9 +54,12 @@ const requestCounts = new Map<string, { count: number; resetAt: number }>();
 const MODEL_AGENT = "claude-haiku-4-5-20251001";
 const MODEL_ORCH = "claude-sonnet-4-20250514";
 const TOKENS_AGENT = 450;
-const TOKENS_COMPRESS = 300;
-const TOKENS_ORCH = 800;
-const INPUT_COMPRESS_THRESHOLD = 600; // chars
+const TOKENS_COMPRESS_BASE = 300;
+const TOKENS_COMPRESS_LARGE = 800;  // for inputs > 10K chars
+const TOKENS_ORCH_BASE = 800;
+const TOKENS_ORCH_LARGE = 2000;     // for large-input refinements
+const INPUT_COMPRESS_THRESHOLD = 2000; // chars — don't compress short inputs
+const LARGE_INPUT_THRESHOLD = 10000;   // chars — triggers higher token budgets
 
 // ─── Enhancer Agent System Prompts ───────────────────────────────────────────
 const AGENT_PROMPTS: Record<string, string> = {
@@ -238,8 +241,12 @@ async function callClaude(
 async function compressInput(
   input: string,
 ): Promise<{ compressed: string; inputTokens: number; outputTokens: number }> {
+  const isLarge = input.length > LARGE_INPUT_THRESHOLD;
+  const wordLimit = isLarge ? 600 : 200;
+  const maxTokens = isLarge ? TOKENS_COMPRESS_LARGE : TOKENS_COMPRESS_BASE;
+
   const system =
-    "Compress the following change request or audit finding into a precise technical summary under 200 words. Preserve all specific technical details, file names, endpoints, and risk signals. Remove filler language. Output plain text only.";
+    `Compress the following change request or audit finding into a precise technical summary under ${wordLimit} words. Preserve all specific technical details, file names, endpoints, and risk signals. Remove filler language. Output plain text only.`;
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
@@ -253,7 +260,7 @@ async function compressInput(
     },
     body: JSON.stringify({
       model: MODEL_AGENT,
-      max_tokens: TOKENS_COMPRESS,
+      max_tokens: maxTokens,
       system,
       messages: [{ role: "user", content: input }],
     }),
@@ -493,7 +500,7 @@ Synthesize per your instructions. Apply security gate first.`;
         },
         body: JSON.stringify({
           model: MODEL_ORCH,
-          max_tokens: TOKENS_ORCH,
+          max_tokens: input.length > LARGE_INPUT_THRESHOLD ? TOKENS_ORCH_LARGE : TOKENS_ORCH_BASE,
           system: orchSystemPrompt,
           messages: [{ role: "user", content: orchInput }],
         }),
