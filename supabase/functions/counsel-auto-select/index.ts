@@ -91,6 +91,44 @@ const VALID_CATEGORIES = [
 
 type Category = typeof VALID_CATEGORIES[number];
 
+// ─── Tag relevance scoring ──────────────────────────────────────────────
+// Computes how many of an agent's expertise tags (or related terms)
+// appear in the input text. Returns a 0-based score.
+function computeTagRelevance(inputLower: string, tags: string[]): number {
+  let hits = 0;
+  for (const tag of tags) {
+    const t = tag.toLowerCase();
+    if (inputLower.includes(t)) hits++;
+    // Also check common related terms for each tag
+    const related = TAG_EXPANSIONS[t];
+    if (related) {
+      for (const r of related) {
+        if (inputLower.includes(r)) { hits++; break; }
+      }
+    }
+  }
+  return hits;
+}
+
+// Related terms for expertise tags — helps match prompts that don't use
+// exact tag words (e.g. "login" → security, "responsive" → frontend)
+const TAG_EXPANSIONS: Record<string, string[]> = {
+  security: ["login", "password", "credential", "attack", "vulnerability", "exploit", "breach", "firewall"],
+  auth: ["login", "session", "oauth", "sso", "password", "credential", "2fa", "mfa"],
+  compliance: ["regulation", "policy", "audit", "gdpr", "hipaa", "soc2", "pci", "legal"],
+  backend: ["server", "api", "microservice", "queue", "worker", "cron", "lambda", "function"],
+  frontend: ["ui", "ux", "responsive", "component", "page", "layout", "render", "browser", "dom"],
+  database: ["sql", "postgres", "mysql", "mongo", "table", "schema", "migration", "query", "index"],
+  devops: ["deploy", "pipeline", "docker", "kubernetes", "ci", "cd", "terraform", "infra", "monitoring"],
+  testing: ["test", "spec", "coverage", "regression", "e2e", "unit", "integration", "assertion"],
+  product: ["feature", "user story", "requirement", "stakeholder", "roadmap", "priority", "mvp"],
+  "rest": ["endpoint", "http", "request", "response", "status code", "payload", "header"],
+  "graphql": ["query", "mutation", "resolver", "schema", "subscription"],
+  performance: ["latency", "throughput", "bottleneck", "cache", "optimize", "profil"],
+  scalability: ["scale", "load", "concurrent", "distributed", "shard", "partition"],
+  "google-play": ["app store", "play store", "android", "mobile app", "apk", "bundle"],
+};
+
 // ─── Helpers ─────────────────────────────────────────────────────────────
 function jsonResponse(body: unknown, status: number) {
   return new Response(JSON.stringify(body), {
@@ -99,16 +137,19 @@ function jsonResponse(body: unknown, status: number) {
   });
 }
 
-function buildSelectionReason(score: number, category: string, complexityScore: number): string {
+function buildSelectionReason(score: number, category: string, complexityScore: number, tagHits: number): string {
   let reason: string;
-  if (score >= 8) {
+  if (score >= 10) {
     reason = `High-priority match for ${category} review`;
-  } else if (score >= 6) {
+  } else if (score >= 7) {
     reason = `Strong match for ${category} review`;
-  } else if (score >= 4) {
+  } else if (score >= 5) {
     reason = `Supporting reviewer for ${category} scope`;
   } else {
     reason = "Included as available specialist";
+  }
+  if (tagHits >= 2) {
+    reason += `; ${tagHits} expertise tags matched`;
   }
   if (complexityScore >= 7) {
     reason += "; elevated complexity";
@@ -210,27 +251,32 @@ Deno.serve(async (req) => {
 
     // ── Scoring ───────────────────────────────────────────────────────
     const routeAgentIds = new Set(ROUTE_TAG_MAP[category]);
+    const inputLower = case_context.toLowerCase();
 
     const scored = pool.map((agent) => {
-      // a. Base score
+      // a. Base score: default-on agents start higher
       let score = agent.defaultOn ? 5 : 3;
 
-      // b. Route-tag match
-      if (routeAgentIds.has(agent.id)) {
+      // b. Route-tag match — skip when category is 'all' (everyone would get it)
+      if (category !== "all" && routeAgentIds.has(agent.id)) {
         score += 3;
       }
 
-      // c. Complexity bonus
+      // c. Tag relevance — how many of this agent's tags appear in the input
+      const tagHits = computeTagRelevance(inputLower, agent.tags);
+      score += Math.min(tagHits, 4); // cap at +4 to avoid runaway scores
+
+      // d. Complexity bonus
       if (complexityScore >= 7 && (agent.id === "security" || agent.id === "backend")) {
         score += 2;
       }
 
-      // d. Context length bonus
+      // e. Context length bonus
       if (case_context.length > 600 && (agent.id === "db" || agent.id === "backend")) {
         score += 1;
       }
 
-      return { agent, score };
+      return { agent, score, tagHits };
     });
 
     // e. Sort descending by score — deterministic tie-breaking by registry order
@@ -253,12 +299,12 @@ Deno.serve(async (req) => {
 
     // h. Compute confidence scores
     const selectedAgents = top
-      .map(({ agent, score }) => ({
+      .map(({ agent, score, tagHits }) => ({
         id: agent.id,
         name: agent.name,
         expertise_tags: agent.tags,
         confidence_score: parseFloat((score / maxRawScore).toFixed(2)),
-        selection_reason: buildSelectionReason(score, category, complexityScore),
+        selection_reason: buildSelectionReason(score, category, complexityScore, tagHits),
       }))
       .filter((a) => a.confidence_score >= MIN_CONFIDENCE);
 
