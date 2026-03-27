@@ -214,6 +214,7 @@ function reducer(state: UnifiedState, action: Action): UnifiedState {
     case 'SET_CLARIFICATIONS':
       return {
         ...state,
+        phase: 'enhancing',
         clarifications: action.payload.clarifications,
       };
 
