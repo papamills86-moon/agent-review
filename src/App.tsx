@@ -5,7 +5,6 @@ import { supabase } from './lib/supabase';
 function LoginGate({ children }: { children: () => React.ReactNode }) {
   const [step, setStep] = useState<'email' | 'otp' | 'authed'>('email');
   const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
   const [authedEmail, setAuthedEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -57,29 +56,6 @@ function LoginGate({ children }: { children: () => React.ReactNode }) {
     }
   }
 
-  async function handleVerifyOtp() {
-    const trimmed = email.trim().toLowerCase();
-    if (!code.trim()) return;
-    setLoading(true);
-    setError('');
-    try {
-      const { error: verifyError } = await supabase.auth.verifyOtp({
-        email: trimmed,
-        token: code.trim(),
-        type: 'email',
-      });
-
-      if (verifyError) {
-        setError('Invalid or expired code. Please try again.');
-      }
-      // On success, onAuthStateChange fires SIGNED_IN and handles state
-    } catch {
-      setError('Verification failed. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  }
-
   if (loading && step !== 'otp') return <div style={styles.center}>Loading…</div>;
 
   if (step === 'email') {
@@ -118,43 +94,16 @@ function LoginGate({ children }: { children: () => React.ReactNode }) {
         <div style={styles.loginBox}>
           <h2 style={styles.loginTitle}>Check your email</h2>
           <p style={styles.otpHint}>
-            We sent a sign-in link to <strong style={{ color: '#e2e8f0' }}>{email}</strong>.
+            We sent a magic link to <strong style={{ color: '#e2e8f0' }}>{email}</strong>.
+          </p>
+          <p style={styles.otpHint}>
             Click the link in your email to sign in.
           </p>
-          <div style={{
-            borderTop: '1px solid #1e293b', paddingTop: '12px', marginTop: '4px',
-            display: 'flex', flexDirection: 'column' as const, gap: '8px',
-          }}>
-            <p style={{ ...styles.otpHint, fontSize: '11px' }}>
-              Or enter the 6-digit code from the email:
-            </p>
-            <input
-              style={styles.input}
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              placeholder="000000"
-              value={code}
-              onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
-              onKeyDown={e => e.key === 'Enter' && handleVerifyOtp()}
-            />
-            <button
-              style={{
-                ...styles.button,
-                opacity: loading || code.length < 6 ? 0.6 : 1,
-                cursor: loading || code.length < 6 ? 'default' : 'pointer',
-              }}
-              disabled={loading || code.length < 6}
-              onClick={handleVerifyOtp}
-            >
-              {loading ? 'Verifying…' : 'Verify Code'}
-            </button>
-          </div>
           <button
             style={styles.backLink}
-            onClick={() => { setStep('email'); setCode(''); setError(''); }}
+            onClick={() => { setStep('email'); setError(''); }}
           >
-            ← Back
+            ← Use a different email
           </button>
           {error && <p style={styles.error}>{error}</p>}
         </div>
